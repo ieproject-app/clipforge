@@ -25,8 +25,6 @@ export default function App() {
     const [loadingLinks, setLoadingLinks] = useState(false);
     const [linkFilter, setLinkFilter] = useState('pending');
     const [linkSearch, setLinkSearch] = useState('');
-    const [newLinkTitle, setNewLinkTitle] = useState('');
-    const [newLinkUrl, setNewLinkUrl] = useState('');
     const [selectedUrls, setSelectedUrls] = useState([]);
 
     const [bulkInput, setBulkInput] = useState('');

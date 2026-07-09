@@ -17,7 +17,10 @@ import { writeJobLog } from './logger.js';
  * @returns {Promise<void>}
  */
 function runFFmpeg(args, options = {}) {
-    console.error(`[FFmpeg Running Command]:\nffmpeg ${args.map(a => a.includes(' ') || a.includes('"') ? `"${a.replace(/"/g, '\\"')}"` : a).join(' ')}`);
+    // Log command to job file only (never stdout — interferes with CLI progress bars)
+    if (options.jobDir) {
+        writeJobLog(options.jobDir, `[FFmpeg] ${args.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')}`);
+    }
     return new Promise((resolve, reject) => {
         const proc = spawn(FFMPEG_PATH, args);
 
@@ -147,7 +150,7 @@ export async function cutSegment(inputPath, start, end, outputPath, watermarkTex
                     cpuFriendly,
                     shortsFormat,
                 }),
-                { onProgress }
+                { onProgress, jobDir }
             );
             writeJobLog(jobDir, `[FFmpeg] Rendering segment success.`);
             return { watermarked: canWatermark };
@@ -172,7 +175,7 @@ export async function cutSegment(inputPath, start, end, outputPath, watermarkTex
                             cpuFriendly,
                             shortsFormat,
                         }),
-                        { onProgress }
+                        { onProgress, jobDir }
                     );
                     writeJobLog(jobDir, `[FFmpeg] GPU fallback to CPU rendering success.`);
                     return { watermarked: canWatermark };
@@ -212,7 +215,7 @@ export async function cutSegment(inputPath, start, end, outputPath, watermarkTex
                                 cpuFriendly,
                                 shortsFormat,
                             }),
-                            { onProgress }
+                            { onProgress, jobDir }
                         );
                         writeJobLog(jobDir, `[FFmpeg] Fallback rendering success.`);
                         return { watermarked: false };
@@ -235,7 +238,7 @@ export async function cutSegment(inputPath, start, end, outputPath, watermarkTex
                                         cpuFriendly,
                                         shortsFormat,
                                     }),
-                                    { onProgress }
+                                    { onProgress, jobDir }
                                 );
                                 writeJobLog(jobDir, `[FFmpeg] Fallback CPU rendering success.`);
                                 return { watermarked: false };

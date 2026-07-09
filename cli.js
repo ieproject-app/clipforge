@@ -398,16 +398,36 @@ async function main() {
           clipBar.start(totalDuration, 0, { clipTitle: title, eta: '--' });
 
           const clipStartTime = Date.now();
+          let lastRealProgress = 0;
+
+          // Primary: real FFmpeg progress from stderr parsing
           const onProgress = (currentSecs) => {
+            lastRealProgress = Math.max(lastRealProgress, currentSecs);
             const elapsed = (Date.now() - clipStartTime) / 1000;
-            const remaining = currentSecs > 0
-              ? Math.round(elapsed / currentSecs * (totalDuration - currentSecs))
+            const remaining = lastRealProgress > 0
+              ? Math.round(elapsed / lastRealProgress * (totalDuration - lastRealProgress))
               : 0;
-            clipBar.update(Math.min(currentSecs, totalDuration), {
+            clipBar.update(Math.min(lastRealProgress, totalDuration), {
               clipTitle: title,
               eta: remaining || '--'
             });
           };
+
+          // Fallback: timer-based estimation (ensures bar moves even if stderr parsing fails)
+          const fallbackTimer = setInterval(() => {
+            const elapsed = (Date.now() - clipStartTime) / 1000;
+            // Estimate: assume 30fps encoding speed as baseline, but never regress
+            const estimated = Math.min(elapsed * 0.8, totalDuration * 0.95);
+            if (estimated > lastRealProgress + 1) {
+              const remaining = estimated > 0
+                ? Math.round(elapsed / estimated * (totalDuration - estimated))
+                : 0;
+              clipBar.update(Math.min(estimated, totalDuration), {
+                clipTitle: title,
+                eta: remaining || '--'
+              });
+            }
+          }, 500);
 
           await cutSegment(
             resolvedSourcePath, start, end, tempSegmentPath,
@@ -415,6 +435,7 @@ async function main() {
             18, false, cpuFriendly, onProgress
           );
 
+          clearInterval(fallbackTimer);
           clipBar.stop();
           const clipDuration = Math.round(totalDuration);
           console.log(chalk.green(`  ✔ ${clipLabel} "${title}" — ${clipDuration}s`));

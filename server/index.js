@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { LINKS_FILE } from './services/platform.js';
+import { metadataLimiter, processLimiter } from './middleware/rateLimiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMP_DIR = path.join(__dirname, 'temp');
@@ -187,7 +188,7 @@ app.delete('/api/links', (req, res) => {
 });
 
 
-app.post('/api/generate-cli', (req, res) => {
+app.post('/api/generate-cli', processLimiter, (req, res) => {
     const { url, urls, segments, exportDir, shortsFormat, copyrightBypass, mergeClips, cpuFriendly } = req.body;
 
     const activeUrls = urls && Array.isArray(urls) ? urls.map(u => u.trim()).filter(Boolean) : [url].filter(Boolean);

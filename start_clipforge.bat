@@ -6,13 +6,13 @@ echo =========================================
 echo.
 
 if not exist node_modules (
-    echo [1/3] node_modules not found. Installing dependencies...
+    echo [1/4] node_modules not found. Installing dependencies...
     call npm install
 ) else (
-    echo [1/3] Dependencies found. Skipping install.
+    echo [1/4] Dependencies found. Skipping install.
 )
 
-echo [2/3] Opening browser at http://localhost:5173...
+echo [2/4] Opening browser at http://localhost:5173...
 start http://localhost:5173
 
 echo [3/4] Spawning CLI execution terminal...
