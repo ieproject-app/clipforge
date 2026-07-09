@@ -27,7 +27,7 @@ describe('buildDrawtextFilter — hostile text file path + Windows font path', (
   })
 
   it('normalizes the Windows text file path (forward slashes + escaped drive colon)', () => {
-    expect(filter).toContain('C\\\\:/Users/akses/ZCodeProject/clipforge/server/temp/watermark.txt')
+    expect(filter).toContain('C\\\\:/home/user/clipforge/server/temp/watermark.txt')
   })
 
   it('emits the fontfile value with the normalized path and no quotes', () => {
@@ -43,7 +43,7 @@ describe('buildDrawtextFilter — hostile text file path + Windows font path', (
 
   it('composes into the exact expected single filter string', () => {
     const expected =
-      "drawtext=textfile=C\\\\:/Users/akses/ZCodeProject/clipforge/server/temp/watermark.txt:" +
+      "drawtext=textfile=C\\\\:/home/user/clipforge/server/temp/watermark.txt:" +
       "fontfile=C\\\\:/Windows/Fonts/segoeui.ttf:fontsize=18:" +
       'fontcolor=white@0.9:box=1:boxcolor=black@0.4:x=(w-text_w)/2:y=h-th-36'
     expect(filter).toBe(expected)

@@ -182,9 +182,40 @@ Arguments:
 
 ---
 
-## 📝 Credits
+## 🆘 Troubleshooting
 
-This project is a fork of **[FullStackHarman/youtube-clipper](https://github.com/FullStackHarman/youtube-clipper)** — the original browser-based YouTube segment downloader. We've rebuilt it with a CLI-first approach, batch processing, GPU acceleration, and AI workflow integration.
+| Problem | Solution |
+|---|---|
+| `yt-dlp: command not found` | Install with `pip install yt-dlp` |
+| `FFmpeg exited with code 1` | Check GPU drivers or add `--cpu-friendly` flag |
+| Green/magenta tint in output | Fixed in v2 — update to latest commit |
+| "Video is too long" error | Edit `MAX_DURATION` in `server/services/ytdlp.js` |
+| Port 5173/3001 already in use | Kill existing process: `npx kill-port 5173 3001` |
+| Gemini JSON parse error | Make sure to paste raw JSON (remove markdown \`\`\` fences) |
 
-**Author:** Iwan Efendi
-**License:** MIT
+---
+
+## ⭐ Support & Author
+
+Jika proyek ini bermanfaat, dukung dengan:
+
+- ⭐ **Star repo ini** di GitHub — bantu orang lain menemukannya
+- 🐛 **Laporkan bug** atau request fitur di [Issues](https://github.com/ieproject-app/clipforge/issues)
+- 🌐 **Kunjungi [SnipGeek.com](https://snipgeek.com/)** — website pribadi saya seputar coding, tools, dan tips teknologi
+
+```
+╔══════════════════════════════════════╗
+║  🌐 https://snipgeek.com/           ║
+║  Coding, Tools & Tech Tips          ║
+╚══════════════════════════════════════╝
+```
+
+**Dibuat dengan ❤️ oleh [Iwan Efendi](https://snipgeek.com/)**
+
+---
+
+## 📝 Credits & License
+
+Proyek ini adalah fork dari **[FullStackHarman/youtube-clipper](https://github.com/FullStackHarman/youtube-clipper)** — aplikasi browser-based YouTube segment downloader original. Kami membangun ulang dengan pendekatan CLI-first, batch processing, GPU acceleration, dan integrasi AI workflow.
+
+**License:** MIT — bebas digunakan, dimodifikasi, dan didistribusikan.

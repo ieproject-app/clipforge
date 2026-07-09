@@ -11,7 +11,7 @@ Untuk performa baca-tulis file video yang maksimal dari FFmpeg dan Python, sanga
 1. Buka terminal WSL Ubuntu Anda.
 2. Salin proyek dari direktori Windows ke folder home WSL Anda (misalnya ke `~/clipforge`):
    ```bash
-   cp -r /mnt/c/Users/akses/ZCodeProject/clipforge ~/clipforge
+   cp -r /mnt/c/Users/<your-username>/clipforge ~/clipforge
    cd ~/clipforge
    ```
 
