@@ -290,7 +290,7 @@ body {
   background: rgba(255, 255, 255, 0.02);
 }
 
-/* Toast Notifications */
+@media (prefers-color-scheme: light) {
   :root {
     --bg-primary: #f1f5f9;
     --bg-glow: radial-gradient(circle at 50% -20%, rgba(59, 130, 246, 0.08) 0%, rgba(241, 245, 249, 0) 60%);
@@ -366,6 +366,10 @@ body {
   /* Toast styles in light mode */
   .toast-alert {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1) !important;
+  }
+
+  .nav-tabs {
+    background: rgba(0, 0, 0, 0.05);
   }
 }
 
@@ -512,12 +516,3 @@ html, body, #root {
   align-items: center;
   gap: 8px;
 }
-
-/* Light mode adjustments */
-@media (prefers-color-scheme: light) {
-  .nav-tabs {
-    background: rgba(0, 0, 0, 0.05);
-  }
-}
-
-
