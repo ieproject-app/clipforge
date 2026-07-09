@@ -373,7 +373,9 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
 - **title**: ${isLongForm ? 'A short, descriptive segment label summarizing what this section covers (max 60 chars). These titles will appear as chapters in the final video.' : 'A short, catchy, viral-ready YouTube Shorts title (max 60 chars). Use power words, numbers, or questions. Must work as a standalone hook.'}
 - **hook**: ${isLongForm ? 'A brief transition sentence connecting this segment to the next one (max 100 chars). Helps the narrative flow.' : 'The opening sentence/phrase that appears in the first 3 seconds to stop the scroll. Make it bold, punchy, and curiosity-driven.'}
 - **description**: ${isLongForm ? 'A segment summary (2-3 sentences) explaining the key point covered and why it matters. Include relevant timestamps and hashtags.' : 'A complete YouTube Shorts description (3-5 sentences). Include: what the clip is about, why it matters, a call-to-action. Write naturally as if speaking to the viewer. End with relevant hashtags on a new line.'}
-- **tags**: A comma-separated string of 10-15 YouTube SEO tags relevant to this specific clip. Include both broad and niche tags.
+- **tags**: A comma-separated string of 10-15 YouTube SEO tags relevant to this specific clip. Include both broad and niche tags (e.g. "islamic lectures, motivation, self improvement, ustadz adi hidayat, ...").
+- **playlist**: A suggested YouTube playlist name where this video belongs (1 line, max 80 chars). Helps organize content into series/categories (e.g. "Ustadz Adi Hidayat — Full Lectures", "Tech Reviews 2026", "Cooking Tutorials").
+- **category**: One of: "Education", "Entertainment", "Music", "Science & Technology", "Comedy", "Gaming", "Sports", "News & Politics", "People & Blogs", "Howto & Style". Pick the most relevant category for YouTube.
 - **credits**: A short credit line referencing the original creator/channel name (e.g. "Original content by [Channel Name]").
 - **disclaimer**: A short fair-use disclaimer (1-2 sentences max).
 
@@ -387,6 +389,8 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
     "hook": "Most people don't know this, but it changes everything...",
     "description": "In this clip, [speaker] breaks down the exact reason why most people struggle with [topic]. This insight completely shifts how you approach [subject]. If you've been making this mistake, here's how to fix it.\n\nFollow for more tips like this!\n\n#Shorts #[Topic] #[Niche] #Tips #Learning",
     "tags": "shorts, [topic], [niche], tips, tutorial, educational, viral, learning, [keyword1], [keyword2]",
+    "playlist": "[Channel Name] — Highlights & Key Moments",
+    "category": "Education",
     "credits": "Original content by [Channel Name]",
     "disclaimer": "This clip is shared for educational purposes under fair use. All rights belong to the original creator."
   }

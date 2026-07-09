@@ -450,6 +450,8 @@ async function main() {
           const ytTags = (seg.tags || '').trim();
           const ytCredits = (seg.credits || `Original content by ${uploader}`).trim();
           const ytDisclaimer = (seg.disclaimer || 'This clip is shared for educational purposes under fair use. All rights belong to the original creator.').trim();
+          const ytPlaylist = (seg.playlist || '').trim();
+          const ytCategory = (seg.category || 'Education').trim();
 
           // SEO-optimized: append uploader & source to title
           const seoTitle = ytTitle.includes(uploader) ? ytTitle : `${ytTitle} | ${uploader}`;
@@ -471,6 +473,10 @@ async function main() {
             seoDescription,
             ``,
             ...(ytTags ? [`TAGS:`, ytTags, ``] : []),
+            ...(ytPlaylist ? [`PLAYLIST:`, ytPlaylist, ``] : []),
+            `CATEGORY:`,
+            ytCategory,
+            ``,
             `CREDITS:`,
             ytCredits,
             ``,
