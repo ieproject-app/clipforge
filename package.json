@@ -1,14 +1,37 @@
 {
-  "name": "youtube-downloader",
-  "version": "1.0.0",
+  "name": "clipforge",
+  "version": "2.0.0",
+  "description": "⚡ AI-powered CLI tool to turn long YouTube videos into viral Shorts — batch download, smart crop, watermark, and compile. Forked from FullStackHarman/youtube-clipper.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "server": "node server/index.js",
     "start": "concurrently \"npm run dev\" \"npm run server\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "cli": "node cli.js"
   },
+  "bin": {
+    "clipforge": "./cli.js"
+  },
+  "keywords": [
+    "youtube",
+    "shorts",
+    "video-editor",
+    "ffmpeg",
+    "cli",
+    "content-creator",
+    "automation",
+    "gemini-ai",
+    "tiktok",
+    "reels"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ieproject-app/youtube-clipper.git"
+  },
+  "author": "Iwan Efendi",
+  "license": "MIT",
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-react": "^4.0.0",
