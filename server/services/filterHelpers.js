@@ -170,7 +170,7 @@ export function buildFilterScriptContent({ watermarkTextFilePath, fontPath, shor
 export function buildCutArgs({ inputPath, start, end, outputPath, filterScriptPath, hasVideoFilter, hasAudioFilter, videoEncoder = 'libx264', cpuFriendly = false, shortsFormat = 'original' }) {
   const args = ['-y', '-ss', String(start), '-to', String(end), '-i', inputPath];
   if (cpuFriendly && videoEncoder === 'libx264') {
-    args.push('-threads', '1')
+    args.push('-threads', '1', '-filter_threads', '1')
   }
   if (filterScriptPath) {
     args.push('-filter_complex_script', filterScriptPath)
