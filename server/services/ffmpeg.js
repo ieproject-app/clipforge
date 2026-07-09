@@ -17,24 +17,36 @@ import { writeJobLog } from './logger.js';
  * @returns {Promise<void>}
  */
 function runFFmpeg(args, options = {}) {
-    console.log(`[FFmpeg Running Command]:\nffmpeg ${args.map(a => a.includes(' ') || a.includes('"') ? `"${a.replace(/"/g, '\\"')}"` : a).join(' ')}`);
+    console.error(`[FFmpeg Running Command]:\nffmpeg ${args.map(a => a.includes(' ') || a.includes('"') ? `"${a.replace(/"/g, '\\"')}"` : a).join(' ')}`);
     return new Promise((resolve, reject) => {
         const proc = spawn(FFMPEG_PATH, args);
 
         let stderr = '';
+        let progressLineBuffer = '';
 
         proc.stderr.on('data', (data) => {
             const str = data.toString();
             stderr += str;
+
             if (options.onProgress) {
-                const timeMatch = str.match(/time=\s*(-?\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
-                if (timeMatch) {
-                    const hours = parseInt(timeMatch[1], 10);
-                    const minutes = parseInt(timeMatch[2], 10);
-                    const seconds = parseInt(timeMatch[3], 10);
-                    const centiseconds = parseInt(timeMatch[4], 10);
-                    const totalSecs = hours * 3600 + minutes * 60 + seconds + centiseconds / 100;
-                    options.onProgress(totalSecs);
+                // Append new chunk to buffer, then process complete lines.
+                // This handles stderr chunks that split the "time=" line in half.
+                progressLineBuffer += str;
+                const lines = progressLineBuffer.split('\n');
+                // Keep the last (potentially incomplete) line in the buffer
+                progressLineBuffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    // Match HH:MM:SS.ms — hours can be 1+ digits (GPU encoders may output single-digit hours)
+                    const timeMatch = line.match(/time=\s*(-?\d{1,}):(\d{2}):(\d{2})\.(\d{2})/);
+                    if (timeMatch) {
+                        const hours = parseInt(timeMatch[1], 10);
+                        const minutes = parseInt(timeMatch[2], 10);
+                        const seconds = parseInt(timeMatch[3], 10);
+                        const centiseconds = parseInt(timeMatch[4], 10);
+                        const totalSecs = hours * 3600 + minutes * 60 + seconds + centiseconds / 100;
+                        options.onProgress(totalSecs);
+                    }
                 }
             }
         });

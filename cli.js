@@ -314,6 +314,12 @@ async function main() {
           const watermarkText = `Source: ${meta.title} by ${uploader}`;
           const totalDuration = end - start;
 
+          // Guard against zero-duration clips
+          if (totalDuration <= 0) {
+            console.log(chalk.yellow(`  ⚠ ${clipLabel} "${title}" — invalid duration (${totalDuration}s), skipped`));
+            continue;
+          }
+
           // Progress bar for this clip
           const clipBar = new cliProgress.SingleBar({
             format: `  ✂ ${clipLabel} ${chalk.cyan('{clipTitle}')} |{bar}| {percentage}% · ~{eta}s`,
@@ -321,15 +327,21 @@ async function main() {
             barIncompleteChar: '\u2591',
             hideCursor: true,
             clearOnComplete: true,
+            barsize: 25,
           }, cliProgress.Presets.shades_classic);
 
           clipBar.start(totalDuration, 0, { clipTitle: title, eta: '--' });
 
+          const clipStartTime = Date.now();
           const onProgress = (currentSecs) => {
-            const pct = Math.min(99, Math.max(0, Math.round((currentSecs / totalDuration) * 100)));
-            const elapsed = currentSecs;
-            const remaining = elapsed > 0 ? Math.round((totalDuration - currentSecs) * (elapsed / currentSecs)) : 0;
-            clipBar.update(currentSecs, { clipTitle: title, eta: remaining || '--' });
+            const elapsed = (Date.now() - clipStartTime) / 1000;
+            const remaining = currentSecs > 0
+              ? Math.round(elapsed / currentSecs * (totalDuration - currentSecs))
+              : 0;
+            clipBar.update(Math.min(currentSecs, totalDuration), {
+              clipTitle: title,
+              eta: remaining || '--'
+            });
           };
 
           await cutSegment(
