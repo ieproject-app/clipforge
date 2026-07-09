@@ -25,6 +25,24 @@
 
 ---
 
+## 🆚 Why CLI-First?
+
+Most video clipping tools lock you into a GUI — you click, drag, wait, repeat. ClipForge separates the **creative work** (choosing segments with AI) from the **heavy lifting** (downloading + rendering), so you can process dozens of videos without watching progress bars all day.
+
+| | GUI Tools | ClipForge CLI |
+|---|---|---|
+| **Batch processing** | ❌ One video at a time | ✅ Dozens of URLs in one run |
+| **Speed** | 🐢 GUI overhead + manual steps | ⚡ GPU-accelerated, zero UI lag |
+| **Re-run** | 🔁 Re-do everything manually | 💾 Persistent cache — instant re-runs |
+| **Automation** | ❌ Click-click-click | 🤖 One command, walk away |
+| **Server-friendly** | ❌ Needs desktop | ✅ Headless Linux/Docker |
+| **Hardware** | 🎮 Any (CPU only) | 🚀 Auto-detect NVENC/AMF/QSV |
+| **AI integration** | ❌ Manual segment picking | ✅ Gemini suggests, CLI executes |
+
+> **Workflow:** Use the web UI to generate the command → run it in terminal → done. The UI is your **control panel**, the CLI is your **engine**.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -33,11 +51,24 @@
 - **Python 3** + **yt-dlp** (`pip install yt-dlp`)
 - **FFmpeg** (with GPU encoders recommended — NVENC, AMF, or QSV)
 
-### Install
+### Windows — One-Click Start
 
 ```bash
-git clone https://github.com/ieproject-app/youtube-clipper.git
-cd youtube-clipper
+# Double-click this file:
+start_clipforge.bat
+```
+
+It will:
+1. Auto-install dependencies (if `node_modules` missing)
+2. Open browser at `http://localhost:5173`
+3. Spawn a **CLI terminal window** ready for pasting commands
+4. Start the frontend + backend servers
+
+### Manual Install
+
+```bash
+git clone https://github.com/ieproject-app/clipforge.git
+cd clipforge
 npm install
 ```
 
