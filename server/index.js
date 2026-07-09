@@ -87,7 +87,7 @@ function writeLinksFile(filePath, links) {
 
 // ============ API ENDPOINTS ============
 
-app.get('/api/links', (req, res) => {
+app.get('/api/links', processLimiter, (req, res) => {
     try {
         if (!fs.existsSync(LINKS_FILE)) {
             fs.mkdirSync(path.dirname(LINKS_FILE), { recursive: true });
@@ -101,7 +101,7 @@ app.get('/api/links', (req, res) => {
     }
 });
 
-app.post('/api/links/status', (req, res) => {
+app.post('/api/links/status', processLimiter, (req, res) => {
     const { url, status } = req.body;
     if (!url || !status) {
         return res.status(400).json({ error: 'Missing url or status.' });
@@ -125,7 +125,7 @@ app.post('/api/links/status', (req, res) => {
     }
 });
 
-app.post('/api/links/add-bulk', (req, res) => {
+app.post('/api/links/add-bulk', processLimiter, (req, res) => {
     const { text } = req.body;
     if (!text || !text.trim()) {
         return res.status(400).json({ error: 'Text content is empty.' });
@@ -166,7 +166,7 @@ app.post('/api/links/add-bulk', (req, res) => {
     }
 });
 
-app.delete('/api/links', (req, res) => {
+app.delete('/api/links', processLimiter, (req, res) => {
     const { url } = req.body;
     if (!url) {
         return res.status(400).json({ error: 'Missing url.' });

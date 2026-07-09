@@ -217,9 +217,20 @@ D:\YT SHORTS\
 │   └── utils/formatTime.js          # Time formatting utilities
 ├── link/
 │   └── link_uah_100_akurat.txt      # Links database (shared)
+├── scripts/                          # One-off utility scripts
 ├── start_clipforge.bat              # Windows quick-start
 └── package.json
 ```
+
+---
+
+## 📚 Additional Guides
+
+| Guide | Description |
+|---|---|
+| [CLI_GUIDE.md](CLI_GUIDE.md) | Detailed CLI usage, batch mode, flags, and examples |
+| [WSL_GUIDE.md](WSL_GUIDE.md) | Setup and run ClipForge inside WSL Ubuntu (Windows) |
+| [ERROR_LOG.md](ERROR_LOG.md) | Common errors and solutions (FFmpeg, yt-dlp, drawtext) |
 
 ---
 
