@@ -3,6 +3,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ora from 'ora';
+import cliProgress from 'cli-progress';
+import chalk from 'chalk';
 import { getMetadata, downloadWithCache } from './server/services/ytdlp.js';
 import { cutSegment, mergeSegments } from './server/services/ffmpeg.js';
 import { validateSegment } from './server/services/filterHelpers.js';
@@ -148,14 +151,14 @@ async function main() {
     process.exit(1);
   }
   
-  console.log(`\n\x1b[35m=== Starting ClipForge Job ===\x1b[0m`);
+  console.log(chalk.magenta.bold(`\n=== Starting ClipForge Job ===`));
   console.log(`📂 Export Folder     : ${exportDir}`);
   console.log(`📱 Layout Format     : ${shortsFormat}`);
   console.log(`🛡️ Bypass            : ${copyrightBypass}`);
   console.log(`🔗 Compilation       : ${mergeClips}`);
   console.log(`🍃 CPU Mode          : ${cpuFriendly ? 'CPU-Friendly (1 Core ✓)' : 'Standard (All Cores)'}`);
   console.log(`🎞️ Videos            : ${urls.length}`);
-  console.log(`⚡ Video Encoder     : ${VIDEO_ENCODER === 'libx264' ? 'libx264 (CPU)' : `${VIDEO_ENCODER} (GPU ✓)`}`);
+  console.log(`⚡ Video Encoder     : ${VIDEO_ENCODER === 'libx264' ? 'libx264 (CPU)' : chalk.green(`${VIDEO_ENCODER} (GPU ✓)`)}`);
 
   // Load links database once at start to check which ones are done
   let linksDb = [];
@@ -191,102 +194,100 @@ async function main() {
       // Skip if already marked as completed in links database
       const dbMatch = linksDb.find(l => l.url === currentUrl);
       if (dbMatch && dbMatch.status === 'done') {
-        console.log(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl}`);
-        console.log(`   Status  : \x1b[33mSkipped (Already completed in database ✓)\x1b[0m`);
+        console.log(chalk.dim(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl} — Skipped (already done ✓)`));
         continue;
       }
 
-      console.log(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl}`);
-      process.stdout.write(`   Status  : Fetching video metadata...\n`);
+      console.log(chalk.cyan(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl}`));
 
       const jobId = `cli-batch-${Date.now()}-${u}`;
       const jobDir = path.resolve(__dirname, 'server', 'temp', jobId);
       fs.mkdirSync(jobDir, { recursive: true });
 
       try {
-        // Fetch metadata
+        // Fetch metadata with spinner
+        const metaSpinner = ora('Fetching video metadata...').start();
         const meta = await getMetadata(currentUrl);
         const videoDuration = meta.duration || 0;
+        const uploader = meta.uploader || 'Unknown';
 
         // Validate segments against actual video duration (deferred check)
         let durationFailed = false;
         currentSegments.forEach((seg, i) => {
           const end = Number(seg.end);
           if (end > videoDuration) {
-            console.error(`\x1b[31mError in segment ${i + 1} "${seg.title || 'Untitled'}": end (${end}s) exceeds video duration (${videoDuration}s)\x1b[0m`);
+            console.error(chalk.red(`\nError in segment ${i + 1} "${seg.title || 'Untitled'}": end (${end}s) exceeds video duration (${videoDuration}s)`));
             durationFailed = true;
           }
         });
         if (durationFailed) {
-          console.error(`\x1b[31mSkipping video — fix segment end times before retrying.\x1b[0m`);
+          metaSpinner.fail('Segment validation failed');
+          console.error(chalk.red('Skipping video — fix segment end times before retrying.'));
           continue;
         }
 
+        const shortTitle = meta.title.length > 55 ? meta.title.substring(0, 55) + '...' : meta.title;
+        metaSpinner.succeed(`${chalk.bold(shortTitle)} ${chalk.dim(`by ${uploader}`)}`);
+
         const cleanTitle = meta.title.replace(/[\\/:*?"<>|]/g, '_');
         cleanTitles.push(cleanTitle);
-        const uploader = meta.uploader || 'Unknown';
 
-        // Update video header and status cleanly in place
-        process.stdout.write(
-          `\x1b[2A\x1b[K📹 [Video ${u + 1}/${urls.length}] "${meta.title.length > 55 ? meta.title.substring(0, 55) + '...' : meta.title}" by ${uploader}\n` +
-          `\x1b[K   Status  : Downloading source video...\n` +
-          `\x1b[K   Progress: [░░░░░░░░░░░░░░░░░░░░░░░░░] 0.0%`
-        );
-
-        // Download source video via persistent cache (with 1 automatic retry)
+        // Download with modern progress bar
         let resolvedSourcePath;
         let downloadError = null;
+        let dlBar = null;
+
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            let hasShownCacheHit = false;
+            let cacheHitShown = false;
             resolvedSourcePath = await downloadWithCache(currentUrl, cacheDir, (pct, info) => {
               if (info && info.isCacheHit) {
-                if (!hasShownCacheHit) {
-                  process.stdout.write(`\r\x1b[K   Progress: ⚡ Cache Hit: Using cached video source (instant ✓)\n`);
-                  hasShownCacheHit = true;
+                if (!cacheHitShown) {
+                  if (dlBar) { dlBar.stop(); dlBar = null; }
+                  console.log(chalk.green('  ⚡ Cache Hit — instant ✓'));
+                  cacheHitShown = true;
                 }
                 writeJobLog(jobDir, 'yt-dlp download: 100% (cache hit)');
                 return;
               }
-              
-              if (pct === 100) {
-                writeJobLog(jobDir, 'yt-dlp download: 100% (complete)');
+
+              if (!dlBar) {
+                dlBar = new cliProgress.SingleBar({
+                  format: `  ⬇ Downloading |${chalk.cyan('{bar}')}| {percentage}% · {speed} · ETA {eta_formatted}`,
+                  barCompleteChar: '\u2588',
+                  barIncompleteChar: '\u2591',
+                  hideCursor: true,
+                  clearOnComplete: true,
+                }, cliProgress.Presets.shades_classic);
+                dlBar.start(100, 0, { speed: '--', eta_formatted: '--' });
               }
 
               const percent = Math.min(pct, 100);
-              const barWidth = 20;
-              const completedWidth = Math.round((percent / 100) * barWidth);
-              const remainingWidth = barWidth - completedWidth;
-              
-              const bar = '█'.repeat(completedWidth) + '░'.repeat(remainingWidth);
-              
-              const speed = info?.speed || 'N/A';
-              const eta = info?.eta || 'N/A';
-              const size = info?.size || 'N/A';
+              const speed = info?.speed || '--';
+              const eta = info?.eta || '--';
 
-              // Carriage return (\r) updates the single line in the terminal dynamically
-              process.stdout.write(`\r\x1b[K   Progress: [${bar}] ${percent.toFixed(1)}% | 📦 ${size} | ⚡ ${speed} | ⏳ ETA: ${eta}`);
-              
+              dlBar.update(percent, { speed, eta_formatted: eta });
+
               if (percent >= 100) {
-                process.stdout.write('\n'); // Line break on complete
+                writeJobLog(jobDir, 'yt-dlp download: 100% (complete)');
+                dlBar.stop();
+                dlBar = null;
               }
             });
             downloadError = null;
             break;
           } catch (err) {
             downloadError = err;
+            if (dlBar) { dlBar.stop(); dlBar = null; }
             if (attempt < 2) {
-              process.stdout.write(`\n\x1b[33m   ⚠ Download attempt ${attempt} failed, retrying in 5 seconds... (${err.message})\x1b[0m\n`);
+              console.log(chalk.yellow(`  ⚠ Attempt ${attempt} failed, retrying in 5s... (${err.message})`));
               await new Promise(r => setTimeout(r, 5000));
             }
           }
         }
         if (downloadError) throw downloadError;
 
-        // Clear progress/status lines and set status to processing segments
-        process.stdout.write(`\x1b[2A\x1b[K   Status  : Processing and formatting segments...\n\x1b[K\n`);
-
-        // Process segments
+        // Process segments with modern per-clip progress bars
         for (let i = 0; i < currentSegments.length; i++) {
           const seg = currentSegments[i];
           const start = Number(seg.start);
@@ -294,45 +295,50 @@ async function main() {
           const title = (seg.title || `Segment_${i + 1}`).trim();
           const cleanSegTitle = title.replace(/[\\/:*?"<>|]/g, '_');
 
+          const clipLabel = `[C${i + 1}/${currentSegments.length}]`;
+
           // Skip-if-exists check
           if (!mergeClips) {
             fs.mkdirSync(exportDir, { recursive: true });
             const finalOutputPath = path.join(exportDir, `${cleanTitle} - Part ${i + 1} - ${cleanSegTitle}.mp4`);
             if (fs.existsSync(finalOutputPath)) {
-              process.stdout.write(`   ⏭ Clip ${i + 1}/${currentSegments.length}: "${title}" [${start}s-${end}s] ... \x1b[33mSkipped (already exists)\x1b[0m\n`);
+              console.log(chalk.yellow(`  ⏭ ${clipLabel} "${title}" — already exists, skipped`));
               totalClipsSkipped++;
               continue;
             }
           }
           
-          process.stdout.write(`   ⏳ Clip ${i + 1}/${currentSegments.length}: "${title}" [${start}s-${end}s] ... \x1b[33mRendering: 0% [□□□□□□□□□□]\x1b[0m`);
-          
           const tempSegmentPath = path.join(batchTempDir, `segment_${u}_${i}.mp4`);
           const watermarkText = `Source: ${meta.title} by ${uploader}`;
-
           const totalDuration = end - start;
+
+          // Progress bar for this clip
+          const clipBar = new cliProgress.SingleBar({
+            format: `  ✂ ${clipLabel} ${chalk.cyan('{clipTitle}')} |{bar}| {percentage}% · ~{eta}s`,
+            barCompleteChar: '\u2588',
+            barIncompleteChar: '\u2591',
+            hideCursor: true,
+            clearOnComplete: true,
+          }, cliProgress.Presets.shades_classic);
+
+          clipBar.start(totalDuration, 0, { clipTitle: title, eta: '--' });
+
           const onProgress = (currentSecs) => {
             const pct = Math.min(99, Math.max(0, Math.round((currentSecs / totalDuration) * 100)));
-            const barLength = 10;
-            const filledLength = Math.round((pct / 100) * barLength);
-            const emptyLength = barLength - filledLength;
-            const bar = '■'.repeat(filledLength) + '□'.repeat(emptyLength);
-            process.stdout.write(`\r\x1b[K   ⏳ Clip ${i + 1}/${currentSegments.length}: "${title}" [${start}s-${end}s] ... \x1b[33mRendering: ${pct}% [${bar}]\x1b[0m`);
+            const elapsed = currentSecs;
+            const remaining = elapsed > 0 ? Math.round((totalDuration - currentSecs) * (elapsed / currentSecs)) : 0;
+            clipBar.update(currentSecs, { clipTitle: title, eta: remaining || '--' });
           };
 
           await cutSegment(
-            resolvedSourcePath,
-            start,
-            end,
-            tempSegmentPath,
-            watermarkText,
-            shortsFormat,
-            copyrightBypass,
-            18,
-            false,
-            cpuFriendly,
-            onProgress
+            resolvedSourcePath, start, end, tempSegmentPath,
+            watermarkText, shortsFormat, copyrightBypass,
+            18, false, cpuFriendly, onProgress
           );
+
+          clipBar.stop();
+          const clipDuration = Math.round(totalDuration);
+          console.log(chalk.green(`  ✔ ${clipLabel} "${title}" — ${clipDuration}s`));
 
           totalClipsProcessed++;
           allSegmentPaths.push(tempSegmentPath);
@@ -369,15 +375,11 @@ async function main() {
           const descPath = path.join(exportDir, `${cleanTitle} - Part ${i + 1} - ${cleanSegTitle}.txt`);
           fs.writeFileSync(descPath, descLines.join('\n'), 'utf8');
 
-          // If NOT compiling, export individual clip immediately and print status
+          // If NOT compiling, export individual clip immediately
           if (!mergeClips) {
             fs.mkdirSync(exportDir, { recursive: true });
             const finalOutputPath = path.join(exportDir, `${cleanTitle} - Part ${i + 1} - ${cleanSegTitle}.mp4`);
             fs.copyFileSync(tempSegmentPath, finalOutputPath);
-            
-            process.stdout.write(`\r\x1b[K   ✔ Clip ${i + 1}/${currentSegments.length}: "${title}" [${start}s-${end}s] ... \x1b[32mSuccess ✓\x1b[0m\n`);
-          } else {
-            process.stdout.write(`\r\x1b[K   ✔ Clip ${i + 1}/${currentSegments.length}: "${title}" [${start}s-${end}s] ... \x1b[32mStaged ✓\x1b[0m\n`);
           }
         }
         successfullyProcessedUrls.push(currentUrl);
@@ -396,14 +398,13 @@ async function main() {
       const cleanFirstTitle = firstTitle.length > 60 ? firstTitle.substring(0, 60) : firstTitle;
       const finalOutputPath = path.join(exportDir, `Compilation - ${cleanFirstTitle} - ${allSegmentPaths.length} Clips.mp4`);
 
-      // Skip-if-exists for compilation output
       if (fs.existsSync(finalOutputPath)) {
-        process.stdout.write(`\n   ⏭ Compilation already exists, skipping merge: ${path.basename(finalOutputPath)}\n`);
+        console.log(chalk.yellow(`\n  ⏭ Compilation already exists, skipping: ${path.basename(finalOutputPath)}`));
       } else {
-        process.stdout.write(`\n   ⏳ Concat: Merging ${allSegmentPaths.length} clips into compilation...\n`);
+        const mergeSpinner = ora(`Merging ${allSegmentPaths.length} clips into compilation...`).start();
         fs.mkdirSync(exportDir, { recursive: true });
         await mergeSegments(allSegmentPaths, finalOutputPath);
-        process.stdout.write(`\x1b[1A\x1b[K   ✔ Compilation: Merged ${allSegmentPaths.length} clips successfully ✓\n`);
+        mergeSpinner.succeed(`Compilation: ${allSegmentPaths.length} clips merged successfully ✓`);
       }
 
       // Write YouTube-optimized metadata text file for the compilation silently
@@ -432,7 +433,7 @@ async function main() {
       fs.writeFileSync(descPath, compilationDescLines.join('\n'), 'utf8');
     }
   } catch (err) {
-    console.error(`\n\x1b[31m❌ Batch Job failed: ${err.message}\x1b[0m`);
+    console.error(chalk.red(`\n❌ Batch Job failed: ${err.message}`));
     if (err.stack) {
       console.error(err.stack);
     }
@@ -485,26 +486,26 @@ async function main() {
           }
           fs.writeFileSync(LINKS_FILE, lines.join('\n') + '\n', 'utf8');
           if (updatedCount > 0) {
-            console.log(`\n\x1b[32m✔ Updated ${updatedCount} links to status 'done' in database! ✓\x1b[0m`);
+            console.log(chalk.green(`\n✔ Updated ${updatedCount} links to 'done' in database ✓`));
           }
           if (revertedCount > 0) {
-            console.log(`\n\x1b[33m↩ Reverted ${revertedCount} incomplete/failed links back to pending ' [ ]' state! ✓\x1b[0m`);
+            console.log(chalk.yellow(`\n↩ Reverted ${revertedCount} incomplete/failed links back to pending ✓`));
           }
         }
       }
     } catch (dbErr) {
-      console.error(`\n\x1b[33mWarning: Failed to update database status: ${dbErr.message}\x1b[0m`);
+      console.error(chalk.yellow(`\nWarning: Failed to update database status: ${dbErr.message}`));
     }
 
-    console.log(`\n\x1b[35m=== Job Finished ===\x1b[0m`);
+    console.log(chalk.magenta(`\n=== Job Finished ===`));
     const skippedNote = totalClipsSkipped > 0 ? ` ⏭ ${totalClipsSkipped} skipped` : '';
-    console.log(`🔗 Completed Batch of \x1b[36m${urls.length}\x1b[0m URLs (\x1b[32m${totalClipsProcessed}\x1b[0m processed${skippedNote}):`);
+    console.log(`🔗 Completed Batch of ${chalk.cyan(urls.length)} URLs (${chalk.green(totalClipsProcessed)} processed${skippedNote}):`);
     urls.forEach(u => {
       const dbMatch = linksDb.find(l => l.url === u);
       if (dbMatch && dbMatch.status === 'done' && !successfullyProcessedUrls.includes(u)) {
-        console.log(`  \x1b[33m- ${u} (Skipped - already completed in database ✓)\x1b[0m`);
+        console.log(chalk.yellow(`  - ${u} (Skipped — already completed ✓)`));
       } else {
-        console.log(`  \x1b[36m- ${u}\x1b[0m`);
+        console.log(chalk.cyan(`  - ${u}`));
       }
     });
     console.log();
