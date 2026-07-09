@@ -46,11 +46,63 @@ ${chalk.bold('JSON Segments Format Example (Single or Multi-URL):')}
 `);
 }
 
+/**
+ * Check GitHub Releases API for newer version (async, non-blocking, cached 24h).
+ * @param {string} currentVersion - Current version from package.json
+ */
+async function checkForUpdates(currentVersion) {
+  const cacheDir = path.resolve(__dirname, 'server', 'temp');
+  const cacheFile = path.join(cacheDir, '.update-check');
+  
+  // Respect cache: only check once per 24 hours
+  try {
+    if (fs.existsSync(cacheFile)) {
+      const lastCheck = parseInt(fs.readFileSync(cacheFile, 'utf8'), 10);
+      if (Date.now() - lastCheck < 24 * 60 * 60 * 1000) return;
+    }
+  } catch { /* cache read error — proceed with check */ }
+
+  try {
+    const res = await fetch(
+      'https://api.github.com/repos/ieproject-app/clipforge/releases/latest',
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (!res.ok) return;
+    
+    const data = await res.json();
+    const latestVersion = (data.tag_name || '').replace(/^v/, '');
+    if (!latestVersion) return;
+
+    // Simple semver comparison: split by dot, compare numerically
+    const current = currentVersion.split('.').map(Number);
+    const latest = latestVersion.split('.').map(Number);
+    const isNewer = latest.length >= 2 && current.length >= 2 &&
+      (latest[0] > current[0] ||
+       (latest[0] === current[0] && latest[1] > current[1]) ||
+       (latest[0] === current[0] && latest[1] === current[1] && (latest[2] || 0) > (current[2] || 0)));
+
+    if (isNewer) {
+      console.log(chalk.yellow(`\n📦 Update available! v${currentVersion} → v${latestVersion}`));
+      console.log(chalk.dim(`   Run: git pull && npm install`));
+      console.log(chalk.dim(`   Changelog: ${data.html_url || 'https://github.com/ieproject-app/clipforge/releases'}`));
+    }
+
+    // Write cache timestamp
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      fs.writeFileSync(cacheFile, String(Date.now()));
+    } catch { /* silent */ }
+  } catch {
+    // Network error, rate limit, or timeout — silent skip
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   
   // Parse flags
   const cpuFriendly = args.includes('--cpu-friendly');
+  const noUpdateCheck = args.includes('--no-update-check');
   
   // Filter out flag parameters to get positional arguments
   const positionalArgs = args.filter(a => !a.startsWith('--'));
@@ -152,8 +204,21 @@ async function main() {
     process.exit(1);
   }
   
-  console.log(chalk.magenta.bold(`\n=== ClipForge CLI ===`));
+  // Read version from package.json
+  const pkgPath = path.resolve(__dirname, 'package.json');
+  const VERSION = (() => {
+    try { return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '0.0.0'; }
+    catch { return '0.0.0'; }
+  })();
+
+  console.log(chalk.magenta.bold(`\n=== ClipForge CLI v${VERSION} ===`));
   console.log(chalk.dim(`   https://snipgeek.com`));
+
+  // Check for updates (async, non-blocking, cached 24h)
+  if (!noUpdateCheck) {
+    checkForUpdates(VERSION);
+  }
+
   console.log(`📂 Export Folder     : ${exportDir}`);
   console.log(`📱 Layout Format     : ${shortsFormat}`);
   console.log(`🛡️ Bypass            : ${copyrightBypass}`);

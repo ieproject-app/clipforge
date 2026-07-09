@@ -1,6 +1,6 @@
 {
   "name": "clipforge",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "⚡ AI-powered CLI tool to turn long YouTube videos into viral Shorts — batch download, smart crop, watermark, and compile. Forked from FullStackHarman/youtube-clipper.",
   "type": "module",
   "scripts": {
