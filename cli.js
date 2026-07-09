@@ -20,24 +20,25 @@ const __dirname = path.dirname(__filename);
 
 function printUsage() {
   console.log(`
-\x1b[1m\x1b[36mClipForge Terminal CLI\x1b[0m
+${chalk.cyan.bold('ClipForge Terminal CLI')}
+${chalk.dim('https://snipgeek.com  ·  Forked from FullStackHarman/youtube-clipper')}
 --------------------------
 Process long YouTube videos into shorts directly from your terminal.
 
-\x1b[1mUsage:\x1b[0m
+${chalk.bold('Usage:')}
   node cli.js <YOUTUBE_URL> <PATH_TO_JSON_SEGMENTS> [EXPORT_DIR] [SHORTS_FORMAT] [COPYRIGHT_BYPASS] [MERGE_CLIPS]
   OR (Batch Mode):
   node cli.js <PATH_TO_JSON_SEGMENTS> [EXPORT_DIR] [SHORTS_FORMAT] [COPYRIGHT_BYPASS] [MERGE_CLIPS]
 
-\x1b[1mParameters:\x1b[0m
-  \x1b[32m<YOUTUBE_URL>\x1b[0m            URL of the long YouTube video to process.
-  \x1b[32m<PATH_TO_JSON_SEGMENTS>\x1b[0m  Path to a JSON file containing clips timestamps.
-  \x1b[32m[EXPORT_DIR]\x1b[0m             Optional. Directory to save the final shorts (Defaults to "D:\\YT Shorts").
-  \x1b[32m[SHORTS_FORMAT]\x1b[0m          Optional. Format layout: "vertical_blurred", "original", "vertical_crop" (Defaults to "vertical_blurred").
-  \x1b[32m[COPYRIGHT_BYPASS]\x1b[0m       Optional. Mirror and adjust speed: "true" or "false" (Defaults to "true").
-  \x1b[32m[MERGE_CLIPS]\x1b[0m            Optional. Combine all clips into a single compilation file: "true" or "false" (Defaults to "false").
+${chalk.bold('Parameters:')}
+  ${chalk.green('<YOUTUBE_URL>')}            URL of the long YouTube video to process.
+  ${chalk.green('<PATH_TO_JSON_SEGMENTS>')}  Path to a JSON file containing clips timestamps.
+  ${chalk.green('[EXPORT_DIR]')}             Optional. Directory to save the final shorts (Defaults to "D:\\YT Shorts").
+  ${chalk.green('[SHORTS_FORMAT]')}          Optional. Format layout: "vertical_blurred", "original", "vertical_crop" (Defaults to "vertical_blurred").
+  ${chalk.green('[COPYRIGHT_BYPASS]')}       Optional. Mirror and adjust speed: "true" or "false" (Defaults to "true").
+  ${chalk.green('[MERGE_CLIPS]')}            Optional. Combine all clips into a single compilation file: "true" or "false" (Defaults to "false").
 
-\x1b[1mJSON Segments Format Example (Single or Multi-URL):\x1b[0m
+${chalk.bold('JSON Segments Format Example (Single or Multi-URL):')}
   [
     { "url": "https://youtube.com/watch?v=...", "start": 120, "end": 175, "title": "Highlight 1" },
     { "url": "https://youtube.com/watch?v=...", "start": 300, "end": 355, "title": "Highlight 2" }
@@ -151,7 +152,8 @@ async function main() {
     process.exit(1);
   }
   
-  console.log(chalk.magenta.bold(`\n=== Starting ClipForge Job ===`));
+  console.log(chalk.magenta.bold(`\n=== ClipForge CLI ===`));
+  console.log(chalk.dim(`   https://snipgeek.com`));
   console.log(`📂 Export Folder     : ${exportDir}`);
   console.log(`📱 Layout Format     : ${shortsFormat}`);
   console.log(`🛡️ Bypass            : ${copyrightBypass}`);
@@ -369,7 +371,7 @@ async function main() {
             `---`,
             `Source URL: ${currentUrl}`,
             `Start: ${start}s | End: ${end}s`,
-            `Generated with ClipForge CLI`,
+            `Generated with ClipForge CLI — snipgeek.com`,
           ];
 
           const descPath = path.join(exportDir, `${cleanTitle} - Part ${i + 1} - ${cleanSegTitle}.txt`);
@@ -428,7 +430,7 @@ async function main() {
         `Total clips merged: ${allSegmentPaths.length}`,
         `Source URLs:`,
         ...urls.map(u => `  - ${u}`),
-        `Generated with ClipForge CLI`,
+        `Generated with ClipForge CLI — snipgeek.com`,
       ];
       fs.writeFileSync(descPath, compilationDescLines.join('\n'), 'utf8');
     }

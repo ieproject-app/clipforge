@@ -548,6 +548,11 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
                 <div className="nav-brand">
                     <span className="nav-logo-icon">⚡</span>
                     <span className="nav-logo-text">ClipForge <span>CLI Hub</span></span>
+                    <a href="https://snipgeek.com" target="_blank" rel="noopener noreferrer" 
+                       style={{ fontSize: '10px', color: '#9ca3af', textDecoration: 'none', marginLeft: '8px', opacity: 0.6, transition: 'opacity 0.2s' }}
+                       onMouseEnter={e => e.target.style.opacity = '1'}
+                       onMouseLeave={e => e.target.style.opacity = '0.6'}
+                    >by snipgeek.com</a>
                 </div>
 
                 <div className="nav-tabs">
@@ -1155,7 +1160,10 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
                                     <code className="log-monospace">{cliCommand}</code>
                                 </div>
                                 <div className="command-help-tip">
-                                    <strong>How to run:</strong> Open your terminal, go to project folder (<code>cd C:\Users\akses\ZCodeProject\clipforge</code>), paste the command, and press <strong>Enter</strong>.
+                                    <strong>How to run:</strong> Open your terminal, go to project folder (<code>cd clipforge</code>), paste the command, and press <strong>Enter</strong>.<br />
+                                    <span style={{ fontSize: '10px', opacity: 0.6, marginTop: '4px', display: 'inline-block' }}>
+                                        ⚡ Powered by <a href="https://snipgeek.com" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>SnipGeek.com</a>
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -1169,6 +1177,22 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
                     {toast.msg}
                 </div>
             )}
+
+            {/* Footer Attribution */}
+            <footer style={{
+                textAlign: 'center', padding: '16px 0', fontSize: '11px',
+                color: '#6b7280', borderTop: '1px solid rgba(255,255,255,0.04)',
+                marginTop: '24px'
+            }}>
+                ⚡ ClipForge — Forked from{' '}
+                <a href="https://github.com/FullStackHarman/youtube-clipper" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>
+                    FullStackHarman/youtube-clipper
+                </a>
+                {' '}· Built by{' '}
+                <a href="https://snipgeek.com" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>
+                    SnipGeek.com
+                </a>
+            </footer>
         </div>
     </div>
     );
