@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — Beta: Auto-Caption 🇮🇩
+
+🚫 **COMMITS ARE LOCKED** — `.beta-lock` is active.  
+To unlock: `del .beta-lock` (Windows) or `rm .beta-lock` (Linux/Mac).
+
+### In Development
+- Auto-caption feature using faster-whisper + stable-ts
+- Indonesian language subtitle generation (Whisper `small` model, ~82% accuracy)
+- Beta toggle in Web UI (can be disabled if buggy)
+- Graceful fallback if whisper not installed
+
+---
+
 ## [1.0.0] — 2026-07-09
 
 ### Added

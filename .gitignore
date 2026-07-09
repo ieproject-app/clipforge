@@ -28,3 +28,6 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Beta lock file (local only, never commit)
+.beta-lock
