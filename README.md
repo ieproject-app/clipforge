@@ -95,11 +95,68 @@ node cli.js "https://youtube.com/watch?v=..." "segments.json" "D:\YT Shorts"
 npm start     # → http://localhost:5173
 ```
 
-1. Add YouTube URLs to the **Link Manager** (paste in bulk)
-2. Click **⚡ Auto 3 Links** to load pending URLs
-3. Click **🎯 Copy Prompt** → paste into **Gemini AI**
-4. Paste Gemini's JSON response into the editor
-5. Click **💻 Generate CLI Command** → run in terminal
+#### Step-by-Step Workflow
+
+**1. Isi Link Manager** — Buka tab **📂 Link Manager**, paste URL YouTube dalam format:
+
+```
+[ ] Judul Video Pertama
+    https://www.youtube.com/watch?v=abc123
+
+[ ] Judul Video Kedua  
+    https://www.youtube.com/watch?v=def456
+```
+
+> 💡 **Format:** `[ ]` (pending) diikuti judul, lalu URL di baris bawahnya dengan indentasi 4 spasi. Klik **📋 Copy Template Format** untuk contoh.
+
+**2. Auto-Select** — Balik ke tab **⚡ Generator**, klik **⚡ Auto 3 Links**. Ini akan:
+- Ambil 3 link paling atas yang masih `pending`
+- Tandai sebagai `processing` (supaya nggak dipilih lagi)
+- Isi otomatis ke form URL
+
+**3. Gemini AI Prompt** — Klik **🎯 Copy Prompt**. Paste ke [Gemini](https://gemini.google.com) dan kirim. Gemini akan menganalisa video dan mengembalikan JSON seperti:
+
+```json
+[
+  {
+    "url": "https://youtube.com/watch?v=abc123",
+    "start": 120,
+    "end": 175,
+    "title": "Why 99% Get This Wrong",
+    "hook": "Most people don't know this...",
+    "description": "In this clip...",
+    "tags": "shorts, tips, tutorial",
+    "credits": "Original content by Channel Name",
+    "disclaimer": "Shared under fair use..."
+  }
+]
+```
+
+**4. Paste & Validate** — Paste JSON Gemini ke textarea **📋 Paste Gemini JSON Result**. Sistem akan otomatis:
+- Membersihkan formatting (markdown fences, broken newlines)
+- Menampilkan jumlah clip terdeteksi + total durasi
+- Validasi struktur JSON
+
+**5. Generate & Execute** — Klik **💻 Generate CLI Command**. Ini menghasilkan command seperti:
+
+```bash
+node cli.js "C:\...\temp\segments-uuid.json" "D:\YT Shorts" "vertical_crop" "true" "false"
+```
+
+> Command otomatis ter-copy ke clipboard. Paste ke terminal dan tekan Enter.
+
+**6. Hasil** — CLI akan:
+- Download source video (dengan progress bar + ETA)
+- Render tiap clip dengan format yang dipilih
+- Generate file `.txt` metadata (title, description, tags) siap upload
+
+```
+D:\YT SHORTS\
+├── Video Title - Part 1 - Clip Title.mp4
+├── Video Title - Part 1 - Clip Title.txt
+├── Video Title - Part 2 - Another Clip.mp4
+└── Video Title - Part 2 - Another Clip.txt
+```
 
 ---
 
