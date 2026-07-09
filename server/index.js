@@ -4,13 +4,10 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import { getMetadata, downloadVideo } from './services/ytdlp.js';
-import { cutSegment, mergeSegments } from './services/ffmpeg.js';
-import { metadataLimiter, processLimiter } from './middleware/rateLimiter.js';
+import { LINKS_FILE } from './services/platform.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMP_DIR = path.join(__dirname, 'temp');
-const MAX_DURATION = 3600; // 1 hour in seconds
 
 // Ensure temp directory exists
 if (!fs.existsSync(TEMP_DIR)) {
@@ -19,172 +16,286 @@ if (!fs.existsSync(TEMP_DIR)) {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' })); // Prevent oversized payload attacks
 
-// ============ SSE Progress Store ============
-const jobProgress = new Map();
+const VALID_STATUSES = ['pending', 'processing', 'done'];
 
-function updateProgress(jobId, step, progress, message) {
-    const data = { step, progress, message, timestamp: Date.now() };
-    jobProgress.set(jobId, data);
-}
+// ============ PARSER HELPERS ============
 
-// ============ ROUTES ============
-
-// Get video metadata
-app.post('/api/metadata', metadataLimiter, async (req, res) => {
-    try {
-        const { url } = req.body;
-        if (!url) {
-            return res.status(400).json({ error: 'URL is required' });
-        }
-
-        // Basic YouTube URL validation
-        const ytRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/)/;
-        if (!ytRegex.test(url)) {
-            return res.status(400).json({ error: 'Invalid YouTube URL' });
-        }
-
-        const metadata = await getMetadata(url);
-
-        if (metadata.duration > MAX_DURATION) {
-            return res.status(400).json({
-                error: `Video is too long (${Math.round(metadata.duration / 60)} min). Maximum allowed duration is 60 minutes.`,
-            });
-        }
-
-        res.json(metadata);
-    } catch (err) {
-        console.error('Metadata error for URL:', req.body.url);
-        console.error('Error detail:', err.message);
-        res.status(500).json({ 
-            error: 'Failed to fetch video metadata.',
-            details: err.message
-        });
-    }
-});
-
-// SSE Progress endpoint
-app.get('/api/progress/:jobId', (req, res) => {
-    const { jobId } = req.params;
-
-    res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-    });
-
-    const interval = setInterval(() => {
-        const data = jobProgress.get(jobId);
-        if (data) {
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
-            if (data.step === 'done' || data.step === 'error') {
-                clearInterval(interval);
-                setTimeout(() => res.end(), 500);
+function parseLinksContent(content) {
+    if (!content) return [];
+    const lines = content.split('\n');
+    const links = [];
+    
+    let currentItem = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        
+        const statusMatch = line.match(/^\[(.*?)\]\s*(.*)$/);
+        if (statusMatch) {
+            if (currentItem) {
+                links.push(currentItem);
+            }
+            const statusStr = statusMatch[1].trim().toLowerCase();
+            const status = (statusStr === 'x' || statusStr === 'done') ? 'done' : 
+                           (statusStr === 'processing') ? 'processing' : 'pending';
+            const title = statusMatch[2].trim();
+            currentItem = {
+                title,
+                status,
+                url: ''
+            };
+        } else if (line.startsWith('http') || line.includes('youtube.com') || line.includes('youtu.be')) {
+            if (currentItem) {
+                currentItem.url = line.trim();
+                const videoIdMatch = currentItem.url.match(/(?:v=|\/shorts\/|\/embed\/|\.be\/)([a-zA-Z0-9_-]{11})/);
+                currentItem.id = videoIdMatch ? videoIdMatch[1] : currentItem.url;
+                links.push(currentItem);
+                currentItem = null;
             }
         }
-    }, 300);
+    }
+    
+    if (currentItem) {
+        links.push(currentItem);
+    }
+    
+    return links;
+}
 
-    req.on('close', () => {
-        clearInterval(interval);
-    });
+function parseLinksFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return [];
+    }
+    return parseLinksContent(fs.readFileSync(filePath, 'utf8'));
+}
+
+function writeLinksFile(filePath, links) {
+    const lines = [];
+    for (const link of links) {
+        const statusBox = link.status === 'done' ? '[Done]' : 
+                          link.status === 'processing' ? '[Processing]' : '[ ]';
+        lines.push(`${statusBox} ${link.title}`);
+        lines.push(`    ${link.url}`);
+        lines.push(``);
+    }
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+}
+
+// ============ API ENDPOINTS ============
+
+app.get('/api/links', (req, res) => {
+    try {
+        if (!fs.existsSync(LINKS_FILE)) {
+            fs.mkdirSync(path.dirname(LINKS_FILE), { recursive: true });
+            fs.writeFileSync(LINKS_FILE, '', 'utf8');
+        }
+        const links = parseLinksFile(LINKS_FILE);
+        res.json({ success: true, links });
+    } catch (err) {
+        console.error('Failed to get links:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// Process video segments
-app.post('/api/process', processLimiter, async (req, res) => {
-    const { url, segments } = req.body;
-
-    if (!url || !segments || !Array.isArray(segments) || segments.length === 0) {
-        return res.status(400).json({ error: 'URL and segments array are required' });
+app.post('/api/links/status', (req, res) => {
+    const { url, status } = req.body;
+    if (!url || !status) {
+        return res.status(400).json({ error: 'Missing url or status.' });
     }
+    if (!VALID_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
+    try {
+        const links = parseLinksFile(LINKS_FILE);
+        const link = links.find(l => l.url === url);
+        if (link) {
+            link.status = status;
+            writeLinksFile(LINKS_FILE, links);
+            res.json({ success: true, message: 'Status updated.' });
+        } else {
+            res.status(404).json({ error: 'Link not found.' });
+        }
+    } catch (err) {
+        console.error('Failed to update status:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 
-    if (segments.length > 20) {
-        return res.status(400).json({ error: 'Maximum 20 segments allowed' });
+app.post('/api/links/add-bulk', (req, res) => {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+        return res.status(400).json({ error: 'Text content is empty.' });
+    }
+    try {
+        const currentLinks = parseLinksFile(LINKS_FILE);
+        const parsedLinks = parseLinksContent(text);
+        
+        if (parsedLinks.length === 0) {
+            return res.status(400).json({ error: 'No valid links found in the text. Make sure to follow the format.' });
+        }
+        
+        let addedCount = 0;
+        let skippedCount = 0;
+        
+        for (const newLink of parsedLinks) {
+            if (currentLinks.some(l => l.url === newLink.url)) {
+                skippedCount++;
+            } else {
+                currentLinks.push(newLink);
+                addedCount++;
+            }
+        }
+        
+        if (addedCount > 0) {
+            writeLinksFile(LINKS_FILE, currentLinks);
+        }
+        
+        res.json({
+            success: true,
+            addedCount,
+            skippedCount,
+            message: `Import complete. Added ${addedCount} new links, skipped ${skippedCount} duplicates.`
+        });
+    } catch (err) {
+        console.error('Failed to add bulk links:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/links', (req, res) => {
+    const { url } = req.body;
+    if (!url) {
+        return res.status(400).json({ error: 'Missing url.' });
+    }
+    try {
+        let links = parseLinksFile(LINKS_FILE);
+        const originalLength = links.length;
+        links = links.filter(l => l.url !== url);
+        if (links.length < originalLength) {
+            writeLinksFile(LINKS_FILE, links);
+            res.json({ success: true, message: 'Link deleted.' });
+        } else {
+            res.status(404).json({ error: 'Link not found.' });
+        }
+    } catch (err) {
+        console.error('Failed to delete link:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.post('/api/generate-cli', (req, res) => {
+    const { url, urls, segments, exportDir, shortsFormat, copyrightBypass, mergeClips, cpuFriendly } = req.body;
+
+    const activeUrls = urls && Array.isArray(urls) ? urls.map(u => u.trim()).filter(Boolean) : [url].filter(Boolean);
+
+    if (activeUrls.length === 0 || !segments || !Array.isArray(segments)) {
+        return res.status(400).json({ error: 'Missing url/urls or segments array.' });
     }
 
     const jobId = uuidv4();
-    const jobDir = path.join(TEMP_DIR, jobId);
-    fs.mkdirSync(jobDir, { recursive: true });
+    const jsonFilename = `segments-${jobId}.json`;
+    const jsonPath = path.join(TEMP_DIR, jsonFilename);
 
-    // Immediately return the job ID
-    res.json({ jobId });
-
-    // Process in background
     try {
-        // Step 1: Download video
-        updateProgress(jobId, 'downloading', 0, 'Starting video download...');
-        const { quality } = req.body;
-        const videoBasePath = path.join(jobDir, 'source');
-        const videoPath = await downloadVideo(url, videoBasePath, quality, (pct) => {
-            updateProgress(jobId, 'downloading', Math.round(pct), `Downloading video (${quality || 'best'})... ${Math.round(pct)}%`);
-        });
-        updateProgress(jobId, 'downloading', 100, 'Download complete');
-
-        // Step 2: Cut segments
-        const segmentPaths = [];
-        for (let i = 0; i < segments.length; i++) {
-            const seg = segments[i];
-            const segPath = path.join(jobDir, `segment_${i}.mp4`);
-            updateProgress(
-                jobId,
-                'cutting',
-                Math.round(((i) / segments.length) * 100),
-                `Cutting segment ${i + 1} of ${segments.length}...`
-            );
-            await cutSegment(videoPath, seg.start, seg.end, segPath);
-            segmentPaths.push(segPath);
+        if (!fs.existsSync(TEMP_DIR)) {
+            fs.mkdirSync(TEMP_DIR, { recursive: true });
         }
-        updateProgress(jobId, 'cutting', 100, 'All segments cut');
+        // Write the segments to the temp folder
+        fs.writeFileSync(jsonPath, JSON.stringify(segments, null, 2), 'utf8');
 
-        // Step 3: Merge segments
-        updateProgress(jobId, 'merging', 0, 'Merging segments...');
-        const outputPath = path.join(jobDir, 'output.mp4');
+        // Resolve absolute path for Windows
+        const absoluteJsonPath = path.resolve(jsonPath);
+        const resolvedExportDir = exportDir || 'D:\\YT Shorts';
+        const resolvedShortsFormat = shortsFormat || 'vertical_blurred';
+        const resolvedBypass = typeof copyrightBypass !== 'undefined' ? copyrightBypass : true;
+        const resolvedMerge = mergeClips ? 'true' : 'false';
 
-        if (segmentPaths.length === 1) {
-            // Just rename if single segment
-            fs.copyFileSync(segmentPaths[0], outputPath);
+        // Generate the node command:
+        // If there's only 1 URL, use single URL format for backward compatibility,
+        // otherwise use Batch Mode format (omit url argument).
+        let command = '';
+        const cpuFriendlyFlag = cpuFriendly ? ' --cpu-friendly' : '';
+        if (activeUrls.length === 1) {
+            command = `node cli.js "${activeUrls[0]}" "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}`;
         } else {
-            await mergeSegments(segmentPaths, outputPath);
+            command = `node cli.js "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}`;
         }
 
-        updateProgress(jobId, 'done', 100, 'Processing complete! Ready for download.');
+        res.json({
+            success: true,
+            jobId,
+            command,
+            jsonPath: absoluteJsonPath
+        });
     } catch (err) {
-        console.error('Processing error:', err.message);
-        updateProgress(jobId, 'error', 0, `Processing failed: ${err.message}`);
+        console.error('Failed to generate CLI JSON/command:', err.message);
+        res.status(500).json({ error: `Server error: ${err.message}` });
     }
 });
 
-// Download processed file
-app.get('/api/file/:jobId', (req, res) => {
-    const { jobId } = req.params;
-    const filePath = path.join(TEMP_DIR, jobId, 'output.mp4');
-
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'File not found or still processing' });
+app.post('/api/clean-cache', (req, res) => {
+    try {
+        if (!fs.existsSync(TEMP_DIR)) {
+            return res.json({ success: true, message: 'Cache directory is already empty.' });
+        }
+        
+        let cleanedFilesCount = 0;
+        let cleanedBytes = 0;
+        
+        const cleanDirRecursive = (dirPath) => {
+            const entries = fs.readdirSync(dirPath);
+            const now = Date.now();
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry);
+                const stat = fs.statSync(fullPath);
+                
+                if (stat.isDirectory()) {
+                    cleanDirRecursive(fullPath);
+                    // If directory is empty after cleaning, delete it
+                    if (fs.readdirSync(fullPath).length === 0) {
+                        fs.rmdirSync(fullPath);
+                    }
+                } else {
+                    // Skip files modified in the last 10 minutes (prevents active job deletion)
+                    if (now - stat.mtimeMs > 10 * 60 * 1000) {
+                        cleanedBytes += stat.size;
+                        fs.unlinkSync(fullPath);
+                        cleanedFilesCount++;
+                    }
+                }
+            }
+        };
+        
+        cleanDirRecursive(TEMP_DIR);
+        
+        const formatMB = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+        
+        res.json({
+            success: true,
+            message: `Cleared ${cleanedFilesCount} cache files (${formatMB(cleanedBytes)} MB freed!) 🧹`
+        });
+    } catch (err) {
+        console.error('Failed to clear cache:', err.message);
+        res.status(500).json({ error: `Failed to clear cache: ${err.message}` });
     }
-
-    const stat = fs.statSync(filePath);
-    res.setHeader('Content-Length', stat.size);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Disposition', `attachment; filename="clipforge_output.mp4"`);
-
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
 });
 
 // ============ TEMP FILE CLEANUP ============
-// Delete job directories older than 30 minutes
+// Delete job JSON files older than 30 minutes
 setInterval(() => {
     try {
         const entries = fs.readdirSync(TEMP_DIR);
         const now = Date.now();
         for (const entry of entries) {
-            const dirPath = path.join(TEMP_DIR, entry);
-            const stat = fs.statSync(dirPath);
-            if (stat.isDirectory() && now - stat.mtimeMs > 30 * 60 * 1000) {
-                fs.rmSync(dirPath, { recursive: true, force: true });
-                jobProgress.delete(entry);
-                console.log(`Cleaned up: ${entry}`);
+            const filePath = path.join(TEMP_DIR, entry);
+            const stat = fs.statSync(filePath);
+            if (stat.isFile() && now - stat.mtimeMs > 30 * 60 * 1000) {
+                fs.unlinkSync(filePath);
+                console.log(`Cleaned up temporary config file: ${entry}`);
             }
         }
     } catch { }

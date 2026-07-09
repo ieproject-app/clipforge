@@ -1,12 +1,50 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'node:fs';
+import { PYTHON_CMD } from './platform.js';
+import { writeJobLog } from './logger.js';
+
+/**
+ * Resolve the actual file yt-dlp wrote for a given output base path (no extension).
+ *
+ * yt-dlp is invoked with an output template of `${outputPathBase}.%(ext)s`, so the
+ * real container may be `.mp4`, `.mkv`, `.webm`, etc. This locates the single file
+ * on disk whose name is the base name followed by a literal dot and an extension.
+ *
+ * @param {string} outputPathBase - Output path WITHOUT extension, e.g. `.../temp/<jobid>/source`
+ * @returns {string} - The full path to the file yt-dlp actually produced
+ * @throws {Error} - When no file matching `${outputPathBase}.*` is found
+ */
+export function resolveDownloadedFile(outputPathBase) {
+    const dir = path.dirname(outputPathBase);
+    const base = path.basename(outputPathBase);
+
+    let entries = [];
+    try {
+        entries = fs.readdirSync(dir);
+    } catch {
+        entries = [];
+    }
+
+    // Match the base name followed by a literal dot and an extension so that a
+    // different base sharing this prefix (e.g. `source_2.mp4`) is not matched.
+    const match = entries.find((entry) => entry.startsWith(base + '.'));
+
+    if (!match) {
+        throw new Error(
+            `Downloaded file not found: expected a file matching "${outputPathBase}.*"`
+        );
+    }
+
+    return path.join(dir, match);
+}
 
 /**
  * Get video metadata using yt-dlp --dump-json
  */
 export function getMetadata(url) {
     return new Promise((resolve, reject) => {
-        const proc = spawn('/opt/homebrew/opt/python@3.11/bin/python3.11', [
+        const proc = spawn(PYTHON_CMD, [
             '-m', 'yt_dlp',
             '--dump-json',
             '--no-playlist',
@@ -63,6 +101,9 @@ export function getMetadata(url) {
  */
 export function downloadVideo(url, outputPath, quality, onProgress) {
     return new Promise((resolve, reject) => {
+        const jobDir = path.dirname(outputPath);
+        writeJobLog(jobDir, `Starting yt-dlp download for URL: ${url} (quality: ${quality || 'best'})`);
+
         let formatStr = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
 
         if (quality === '1080p') {
@@ -76,7 +117,7 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
         }
 
         const outputTemplate = `${outputPath}.%(ext)s`;
-        const proc = spawn('/opt/homebrew/opt/python@3.11/bin/python3.11', [
+        const proc = spawn(PYTHON_CMD, [
             '-m', 'yt_dlp',
             '-f', formatStr,
             '--merge-output-format', 'mp4',
@@ -86,6 +127,8 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
             '--progress',
             '--force-ipv4',
             '--no-check-certificates',
+            '--retries', '3',
+            '--fragment-retries', '5',
             '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             '--extractor-args', 'youtube:player_client=android,web',
             '-o', outputTemplate,
@@ -94,6 +137,7 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
 
         let stderr = '';
         let lastProgress = 0;
+        let lastProgressLog = -1;
 
         proc.stdout.on('data', (data) => {
             const lines = data.toString().split('\n');
@@ -103,7 +147,26 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
                     const pct = parseFloat(match[1]);
                     if (pct > lastProgress) {
                         lastProgress = pct;
-                        onProgress?.(Math.min(pct, 100));
+
+                        // Try to extract speed, ETA, and size in standard yt-dlp format
+                        const sizeMatch = line.match(/of\s+(\S+)/);
+                        const speedMatch = line.match(/at\s+(\S+)/);
+                        const etaMatch = line.match(/ETA\s+(\S+)/);
+
+                        const info = {
+                            percent: pct,
+                            size: sizeMatch ? sizeMatch[1] : 'unknown',
+                            speed: speedMatch ? speedMatch[1] : 'unknown',
+                            eta: etaMatch ? etaMatch[1] : 'unknown'
+                        };
+
+                        onProgress?.(Math.min(pct, 100), info);
+                        
+                        const roundedPct = Math.round(pct);
+                        if (roundedPct % 10 === 0 && roundedPct !== lastProgressLog) {
+                            lastProgressLog = roundedPct;
+                            writeJobLog(jobDir, `yt-dlp download: ${lastProgressLog}%`);
+                        }
                     }
                 }
             }
@@ -115,15 +178,91 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
 
         proc.on('close', (code) => {
             if (code !== 0) {
+                writeJobLog(jobDir, `yt-dlp download failed with exit code ${code}. Error: ${stderr}`);
                 return reject(new Error(`yt-dlp download failed: ${stderr}`));
             }
-            // Find the actual output file
-            const finalPath = `${outputPath}.mp4`;
-            resolve(finalPath);
+            // Resolve the actual output file rather than assuming a .mp4 extension.
+            try {
+                const finalPath = resolveDownloadedFile(outputPath);
+                writeJobLog(jobDir, `yt-dlp download completed. Target: ${finalPath}`);
+                resolve(finalPath);
+            } catch (err) {
+                reject(err);
+            }
         });
 
         proc.on('error', (err) => {
             reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
         });
     });
+}
+
+/**
+ * Extract a YouTube video ID from any standard YouTube URL format.
+ *
+ * Supports watch, short, embed, and youtu.be URL patterns.
+ * Returns `null` if no video ID can be identified.
+ *
+ * @param {string} url - YouTube URL string.
+ * @returns {string|null} The 11-character video ID, or null.
+ */
+export function extractVideoIdFromUrl(url) {
+    const patterns = [
+        /[?&]v=([a-zA-Z0-9_-]{11})/,
+        /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+        /\/shorts\/([a-zA-Z0-9_-]{11})/,
+        /\/embed\/([a-zA-Z0-9_-]{11})/,
+    ];
+    for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) return match[1];
+    }
+    return null;
+}
+
+/**
+ * Download a video with a persistent disk cache.
+ *
+ * Before downloading, checks if a cached copy already exists under
+ * `cacheDir/<videoId>.mp4`. If it does, returns the cached path immediately
+ * without hitting the network. Otherwise downloads at max-1080p quality,
+ * moves the result into the cache, and returns the cached path.
+ *
+ * Falls back to a no-cache download if the video ID cannot be extracted from
+ * the URL (e.g. private/unlisted videos without a standard ID in the URL).
+ *
+ * @param {string} url        - YouTube video URL.
+ * @param {string} cacheDir   - Directory to store cached video files.
+ * @param {Function} [onProgress] - Optional progress callback `(pct) => void`.
+ * @returns {Promise<string>} - Resolved path to the (possibly cached) video file.
+ */
+export async function downloadWithCache(url, cacheDir, onProgress) {
+    const videoId = extractVideoIdFromUrl(url);
+
+    if (videoId) {
+        const cachedPath = path.join(cacheDir, `${videoId}.mp4`);
+        if (fs.existsSync(cachedPath)) {
+            onProgress?.(100, { percent: 100, isCacheHit: true });
+            return cachedPath;
+        }
+
+        // Download to a temp base path inside the cache dir, then resolve the
+        // actual extension yt-dlp wrote before renaming to the canonical .mp4 name.
+        fs.mkdirSync(cacheDir, { recursive: true });
+        const tempBase = path.join(cacheDir, `${videoId}_dl`);
+        await downloadVideo(url, tempBase, '1080p', onProgress);
+        const downloadedPath = resolveDownloadedFile(tempBase);
+
+        // Rename to the canonical cache filename so future calls hit the cache.
+        if (downloadedPath !== cachedPath) {
+            fs.renameSync(downloadedPath, cachedPath);
+        }
+        return cachedPath;
+    }
+
+    // No video ID extractable — fall back to uncached download into cacheDir.
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const tempBase = path.join(cacheDir, `nocache_${Date.now()}`);
+    await downloadVideo(url, tempBase, '1080p', onProgress);
+    return resolveDownloadedFile(tempBase);
 }

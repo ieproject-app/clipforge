@@ -27,20 +27,3 @@ export function parseTime(timeStr) {
     if (parts.length === 2) return parts[0] * 60 + parts[1];
     return parts[0] || 0;
 }
-
-/**
- * Extract YouTube video ID from URL
- */
-export function extractVideoId(url) {
-    const patterns = [
-        /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/,
-        /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
-        /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
-        /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
-    ];
-    for (const pattern of patterns) {
-        const match = url.match(pattern);
-        if (match) return match[1];
-    }
-    return null;
-}
