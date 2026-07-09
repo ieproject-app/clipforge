@@ -443,7 +443,7 @@ async function main() {
           totalClipsProcessed++;
           allSegmentPaths.push(tempSegmentPath);
 
-          // Build YouTube-optimized metadata text file silently
+          // Build YouTube-optimized metadata text file
           const ytTitle = (seg.title || title).trim();
           const ytHook = (seg.hook || '').trim();
           const ytDescription = (seg.description || '').trim();
@@ -451,13 +451,24 @@ async function main() {
           const ytCredits = (seg.credits || `Original content by ${uploader}`).trim();
           const ytDisclaimer = (seg.disclaimer || 'This clip is shared for educational purposes under fair use. All rights belong to the original creator.').trim();
 
+          // SEO-optimized: append uploader & source to title
+          const seoTitle = ytTitle.includes(uploader) ? ytTitle : `${ytTitle} | ${uploader}`;
+          // SEO-optimized: prepend original video info to description
+          const seoDescription = [
+            `📺 Original Video: ${meta.title}`,
+            `🎙️ Speaker/Channel: ${uploader}`,
+            `🔗 Source: ${currentUrl}`,
+            ``,
+            ytDescription || `Highlight from: ${meta.title}`,
+          ].join('\n');
+
           const descLines = [
             `TITLE:`,
-            ytTitle,
+            seoTitle,
             ``,
             ...(ytHook ? [`HOOK:`, ytHook, ``] : []),
             `DESCRIPTION:`,
-            ytDescription || `Clip from: ${meta.title}\nSource: ${currentUrl}`,
+            seoDescription,
             ``,
             ...(ytTags ? [`TAGS:`, ytTags, ``] : []),
             `CREDITS:`,

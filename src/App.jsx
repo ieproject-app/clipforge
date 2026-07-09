@@ -317,6 +317,8 @@ export default function App() {
             durationRules = '- Each Shorts clip must be **15-60 seconds** long (ideally under 60s). Focus on quick hooks, punchlines, and high-energy/fast-paced moments.';
         } else if (durationPref === 'deep') {
             durationRules = '- Each Shorts clip must be **30-90 seconds** long. Focus on delivering a complete, meaningful point, lesson, or explanation without cutting off mid-sentence.';
+        } else if (durationPref === 'long') {
+            durationRules = '- This is a **long-form highlight reel (3-15 minutes total)**. Extract the most important segments that preserve the full narrative arc — intro, key points, climax, and conclusion. Cut repetitive or less important parts, but keep the story flowing naturally from start to finish.\n- Each individual segment should be 30 seconds to 3 minutes long.\n- When combined in order, the segments should feel like one cohesive video — not a compilation of random clips.';
         } else {
             durationRules = '- Each Shorts clip can be **15-120 seconds** long. Let the content dictate the length: keep it brief (15-45s) for quick visual hooks/remarks, and longer (60-120s) for deeper explanations or stories where a complete, cohesive point is made.';
         }
@@ -328,7 +330,12 @@ export default function App() {
             urlsSection = `## Video URLs to Analyze\n` + urls.map((u, idx) => `- Video ${idx + 1}: ${u}`).join('\n');
         }
 
-        const prompt = `You are a professional YouTube Shorts content strategist and editor. Analyze the following YouTube video(s) and extract the BEST segments to turn into viral Shorts clips.
+        const isLongForm = durationPref === 'long';
+        const promptIntro = isLongForm
+          ? `You are a professional video editor and content strategist. Analyze the following YouTube video(s) and create a **comprehensive highlight reel** that preserves the original narrative flow — not individual Shorts clips.`
+          : `You are a professional YouTube Shorts content strategist and editor. Analyze the following YouTube video(s) and extract the BEST segments to turn into viral Shorts clips.`;
+
+        const prompt = `${promptIntro}
 
 ${urlsSection}
 
@@ -336,17 +343,26 @@ Please OPEN each video URL above to watch/analyze the content directly. Pay care
 - Hook moments (first 3 seconds must grab attention)
 - The most emotionally resonant, informative, or entertaining parts
 - Natural sentence breakpoints (never cut mid-sentence)
-- Moments that stand alone without needing prior context
+${isLongForm ? '- **The narrative arc** — intro → development → climax → conclusion must flow naturally when segments are combined' : '- Moments that stand alone without needing prior context'}
 
 ## Rules
 ${durationRules}
-- Prioritize the MOST engaging parts: strong openings, surprising facts, emotional peaks, clear takeaways
+${isLongForm
+  ? `- Prioritize the CORE message: focus on the essential talking points, skip tangents and repetition
+- Keep the story coherent — viewers should understand the full message without watching the original
+- Start strong (hook the viewer), end with a clear takeaway or call-to-action
+- Total segments: Dynamically determine based on video duration:
+  - Under 15 minutes → 3-5 segments
+  - 15-30 minutes → 5-10 segments
+  - Over 30 minutes → 10-20 segments
+  (The combined duration should be 3-15 minutes)`
+  : `- Prioritize the MOST engaging parts: strong openings, surprising facts, emotional peaks, clear takeaways
 - Segments must NOT overlap with each other
 - Total suggestions: Dynamically determine the number based on each video's duration:
   - Under 10 minutes → suggest 2-3 clips
   - 10-30 minutes → suggest 4-7 clips
   - Over 30 minutes → suggest 8-15 clips
-  (Prioritize only the most impactful highlights)
+  (Prioritize only the most impactful highlights)`}
 
 ## Output Format
 Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item must contain ALL of the following fields:
@@ -354,9 +370,9 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
 - **url**: The exact YouTube URL of the source video for this clip
 - **start**: Start time in seconds (integer)
 - **end**: End time in seconds (integer)
-- **title**: A short, catchy, viral-ready YouTube Shorts title (max 60 chars). Use power words, numbers, or questions. Must work as a standalone hook.
-- **hook**: The opening sentence/phrase that appears in the first 3 seconds to stop the scroll. Make it bold, punchy, and curiosity-driven.
-- **description**: A complete YouTube Shorts description (3-5 sentences). Include: what the clip is about, why it matters, a call-to-action. Write naturally as if speaking to the viewer. End with relevant hashtags on a new line.
+- **title**: ${isLongForm ? 'A short, descriptive segment label summarizing what this section covers (max 60 chars). These titles will appear as chapters in the final video.' : 'A short, catchy, viral-ready YouTube Shorts title (max 60 chars). Use power words, numbers, or questions. Must work as a standalone hook.'}
+- **hook**: ${isLongForm ? 'A brief transition sentence connecting this segment to the next one (max 100 chars). Helps the narrative flow.' : 'The opening sentence/phrase that appears in the first 3 seconds to stop the scroll. Make it bold, punchy, and curiosity-driven.'}
+- **description**: ${isLongForm ? 'A segment summary (2-3 sentences) explaining the key point covered and why it matters. Include relevant timestamps and hashtags.' : 'A complete YouTube Shorts description (3-5 sentences). Include: what the clip is about, why it matters, a call-to-action. Write naturally as if speaking to the viewer. End with relevant hashtags on a new line.'}
 - **tags**: A comma-separated string of 10-15 YouTube SEO tags relevant to this specific clip. Include both broad and niche tags.
 - **credits**: A short credit line referencing the original creator/channel name (e.g. "Original content by [Channel Name]").
 - **disclaimer**: A short fair-use disclaimer (1-2 sentences max).
@@ -664,9 +680,16 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
                         
                         {/* Duration pills */}
                         <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
-                            {['dynamic','short','deep'].map(mode => (
+                            {['dynamic','short','deep','long'].map(mode => (
                                 <button key={mode} type="button"
-                                    onClick={() => { setDurationPref(mode); setCliCommand(''); }}
+                                    onClick={() => {
+                                        setDurationPref(mode);
+                                        setCliCommand('');
+                                        if (mode === 'long') {
+                                            setShortsFormat('original');
+                                            setMergeClips(true);
+                                        }
+                                    }}
                                     style={{
                                         padding: '5px 14px', fontSize: '11.5px', borderRadius: '16px', fontWeight: '600',
                                         border: durationPref === mode ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)',
@@ -674,10 +697,15 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
                                         color: durationPref === mode ? '#60a5fa' : '#9ca3af',
                                         cursor: 'pointer'
                                     }}>
-                                    {mode === 'dynamic' ? '🌟 Dynamic (15-120s)' : mode === 'short' ? '⚡ Short (15-60s)' : '📚 Deep (30-90s)'}
+                                    {mode === 'dynamic' ? '🌟 Dynamic (15-120s)' : mode === 'short' ? '⚡ Short (15-60s)' : mode === 'deep' ? '📚 Deep (30-90s)' : '📺 Long Form (3-15 min)'}
                                 </button>
                             ))}
                         </div>
+                        {durationPref === 'long' && (
+                            <div style={{ fontSize: '11px', color: '#fbbf24', marginBottom: '8px', background: 'rgba(251,191,36,0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(251,191,36,0.15)' }}>
+                                ⚠️ Standard YouTube (16:9) · Auto-merge enabled · Best for highlight reels & educational content
+                            </div>
+                        )}
 
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <button type="button" className="btn btn-secondary"
