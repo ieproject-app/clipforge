@@ -40,6 +40,22 @@ export function resolveDownloadedFile(outputPathBase) {
 }
 
 /**
+ * Shared base arguments for yt-dlp invocations.
+ * These are common to both metadata queries and video downloads.
+ * @returns {string[]}
+ */
+function getYtDlpBaseArgs() {
+    return [
+        '--no-playlist',
+        '--no-warnings',
+        '--force-ipv4',
+        '--no-check-certificates',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--extractor-args', 'youtube:player_client=android,web',
+    ];
+}
+
+/**
  * Get video metadata using yt-dlp --dump-json
  *
  * Includes a 30-second timeout to prevent hanging on invalid/malicious URLs
@@ -48,15 +64,10 @@ export function resolveDownloadedFile(outputPathBase) {
 export function getMetadata(url) {
     return new Promise((resolve, reject) => {
         const proc = spawn(PYTHON_CMD, [
-            '-m', 'yt_dlp',
-            '--dump-json',
-            '--no-playlist',
-            '--no-warnings',
-            '--force-ipv4',
-            '--no-check-certificates',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '--extractor-args', 'youtube:player_client=android,web',
-            url,
+                    '-m', 'yt_dlp',
+                    '--dump-json',
+                    ...getYtDlpBaseArgs(),
+                    url,
         ]);
 
         let stdout = '';
@@ -141,20 +152,15 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
             '-m', 'yt_dlp',
             '-f', formatStr,
             '--merge-output-format', 'mp4',
-            '--no-playlist',
-            '--no-warnings',
             '--newline',
             '--progress',
-            '--force-ipv4',
-            '--no-check-certificates',
+            ...getYtDlpBaseArgs(),
             '--retries', '10',
             '--fragment-retries', '10',
             '--extractor-retries', '5',
             '--sleep-requests', '2',
             '--sleep-interval', '5',
             '--max-sleep-interval', '60',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '--extractor-args', 'youtube:player_client=android,web',
             '-o', outputTemplate,
             url,
         ]);
