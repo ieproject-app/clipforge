@@ -5,7 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { LINKS_FILE, CHANNELS, getLinksFile } from './services/platform.js';
-import { metadataLimiter, processLimiter } from './middleware/rateLimiter.js';
+import { metadataLimiter, processLimiter, linksLimiter } from './middleware/rateLimiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMP_DIR = path.join(__dirname, 'temp');
@@ -100,7 +100,7 @@ app.get('/api/channels', (req, res) => {
     res.json({ success: true, channels });
 });
 
-app.get('/api/links', processLimiter, (req, res) => {
+app.get('/api/links', linksLimiter, (req, res) => {
     try {
         const channel = req.query.channel || 'default';
         const linksFile = getLinksFile(channel);
@@ -116,7 +116,7 @@ app.get('/api/links', processLimiter, (req, res) => {
     }
 });
 
-app.post('/api/links/status', processLimiter, (req, res) => {
+app.post('/api/links/status', linksLimiter, (req, res) => {
     const { url, status, channel } = req.body;
     if (!url || !status) {
         return res.status(400).json({ error: 'Missing url or status.' });
@@ -141,7 +141,7 @@ app.post('/api/links/status', processLimiter, (req, res) => {
     }
 });
 
-app.post('/api/links/add-bulk', processLimiter, (req, res) => {
+app.post('/api/links/add-bulk', linksLimiter, (req, res) => {
     const { text, channel } = req.body;
     if (!text || !text.trim()) {
         return res.status(400).json({ error: 'Text content is empty.' });
@@ -183,7 +183,7 @@ app.post('/api/links/add-bulk', processLimiter, (req, res) => {
     }
 });
 
-app.delete('/api/links', processLimiter, (req, res) => {
+app.delete('/api/links', linksLimiter, (req, res) => {
     const { url, channel } = req.body;
     if (!url) {
         return res.status(400).json({ error: 'Missing url.' });

@@ -55,7 +55,8 @@ export default function App() {
                 const data = await res.json();
                 setLinks(data.links || []);
             } else {
-                showToast('Failed to load links from file.', 'error');
+                const errData = await res.json().catch(() => ({ error: 'Unknown error' }));
+                showToast(`Failed to load links: ${errData.error || res.statusText}`, 'error');
             }
         } catch (err) {
             showToast(`Error: ${err.message}`, 'error');

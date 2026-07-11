@@ -15,3 +15,13 @@ export const processLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+
+// Lightweight limiter for Link Manager CRUD operations (file reads/writes only).
+// Higher limit since these are just text file operations, not video downloads.
+export const linksLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 60,
+    message: { error: 'Too many link operations. Please slow down.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
