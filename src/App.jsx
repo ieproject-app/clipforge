@@ -886,7 +886,6 @@ export default function App() {
                             <select value={activeChannel}
                                 onChange={(e) => {
                                     setActiveChannel(e.target.value);
-                                    setTimeout(() => fetchLinks(true), 50);
                                 }}
                                 className="premium-select"
                                 style={{ fontSize: '12px', padding: '4px 8px', minWidth: '160px' }}>
