@@ -42,6 +42,21 @@ describe('buildFilterScriptContent', () => {
         expect(res.hasAudioFilter).toBe(false);
     });
 
+    it('generates correct filters for moderate crop shorts format only', () => {
+        const res = buildFilterScriptContent({
+            watermarkTextFilePath: null,
+            fontPath: null,
+            shortsFormat: 'vertical_moderate',
+            copyrightBypass: false,
+        });
+        expect(res.filterContent).toContain('scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:10,format=yuv420p[bg]');
+        expect(res.filterContent).toContain('crop=in_w*0.5:in_h,scale=1080:-1,format=yuv420p[fg]');
+        expect(res.filterContent).toContain('overlay=0:(main_h-overlay_h)/2:format=yuv420[v_vertical]');
+        expect(res.filterContent).toContain('[v_vertical]null[v]');
+        expect(res.hasVideoFilter).toBe(true);
+        expect(res.hasAudioFilter).toBe(false);
+    });
+
     it('generates correct filters for center crop shorts format only', () => {
         const res = buildFilterScriptContent({
             watermarkTextFilePath: null,
@@ -70,7 +85,7 @@ describe('buildFilterScriptContent', () => {
         expect(res.hasAudioFilter).toBe(true);
     });
 
-    it('ignores subtitles filter when autoCaptionsSrtPath is provided since it is disabled', () => {
+    it('includes subtitles filter when autoCaptionsSrtPath is provided', () => {
         const res = buildFilterScriptContent({
             watermarkTextFilePath: null,
             fontPath: null,
@@ -78,8 +93,38 @@ describe('buildFilterScriptContent', () => {
             copyrightBypass: false,
             autoCaptionsSrtPath: 'C:\\temp\\subtitles.srt',
         });
-        expect(res.filterContent).not.toContain("subtitles=");
-        expect(res.hasVideoFilter).toBe(false);
+        expect(res.filterContent).toContain("subtitles=");
+        expect(res.hasVideoFilter).toBe(true);
+        expect(res.hasAudioFilter).toBe(false);
+
+        // Regression guard for AUDIT_PROMPT.md auto-caption bug: the `filename=`
+        // value must be UNQUOTED. FFmpeg's filtergraph parser treats backslash as
+        // an escape char only in unquoted values; inside single quotes backslashes
+        // are literal, so the `\\:` colon escape from normalizeFontPath would NOT
+        // protect the drive-letter colon and FFmpeg rejects the whole filter
+        // script (see ERROR_LOG.md #8). A quoted `filename='...'` here is a bug.
+        expect(res.filterContent).toContain("filename=C");
+        expect(res.filterContent).not.toMatch(/filename='/);
+
+        // force_style stays quoted: its commas would otherwise split options.
+        expect(res.filterContent).toContain("force_style='");
+    });
+
+    it('combines subtitles (unquoted filename) with watermark (quoted force_style) without breaking either', () => {
+        // Regression guard for AUDIT_PROMPT.md: subtitle + watermark combo must
+        // keep filename= unquoted AND force_style= quoted in the same chain.
+        const res = buildFilterScriptContent({
+            watermarkTextFilePath: 'C:/temp/watermark.txt',
+            fontPath: 'C:/Windows/Fonts/arial.ttf',
+            shortsFormat: 'original',
+            copyrightBypass: false,
+            autoCaptionsSrtPath: 'C:\\temp\\subtitles.srt',
+        });
+        expect(res.filterContent).toContain('subtitles=filename=C');
+        expect(res.filterContent).not.toMatch(/filename='/);
+        expect(res.filterContent).toContain("force_style='");
+        expect(res.filterContent).toContain('drawtext=textfile=');
+        expect(res.hasVideoFilter).toBe(true);
         expect(res.hasAudioFilter).toBe(false);
     });
 });

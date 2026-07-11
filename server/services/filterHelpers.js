@@ -28,7 +28,9 @@ export function escapeDrawtextText(text) {
 }
 
 /**
- * Normalize a filesystem font path for use as an FFmpeg `fontfile=` option value.
+ * Normalize a filesystem font path for use as an FFmpeg filter option value
+ * that is placed UNQUOTED in the filtergraph (e.g. `fontfile=<value>` or
+ * `subtitles=filename=<value>`).
  *
  * FFmpeg filtergraph parsing treats backslashes and colons specially, so a
  * Windows path like `C:\Windows\Fonts\segoeui.ttf` must be rewritten to use
@@ -38,8 +40,16 @@ export function escapeDrawtextText(text) {
  * Only the drive-letter colon at the start of the path is escaped; any other
  * colons (rare on POSIX paths) are left untouched.
  *
+ * IMPORTANT — quoted vs unquoted escaping rules differ in FFmpeg filtergraphs:
+ * In an UNQUOTED value, `\` is an escape character, so the emitted `\\:` works.
+ * Inside single quotes, backslashes are LITERAL and `\\:` does NOT escape the
+ * colon — a quoted value must use single-backslash `\:` instead. This helper
+ * produces unquoted-safe output; do NOT wrap its result in single quotes.
+ * Callers like `drawtext=textfile=...` and `subtitles=filename=...` rely on
+ * this (see AUDIT_PROMPT.md / ERROR_LOG.md #8 for the regression this caused).
+ *
  * @param {string} fontPath - Raw font file path (Windows or POSIX style).
- * @returns {string} The normalized path, safe to embed in `fontfile=<value>`.
+ * @returns {string} The normalized path, safe to embed unquoted as `option=<value>`.
  */
 export function normalizeFontPath(fontPath) {
   return fontPath
@@ -80,7 +90,7 @@ export function buildDrawtextFilter({ textFilePath, fontPath, fontSize = 18, fon
  * @param {Object} opts
  * @param {string} [opts.watermarkTextFilePath] - Normalized path to raw title text file.
  * @param {string} [opts.fontPath] - Normalized font path.
- * @param {string} [opts.shortsFormat] - 'original', 'vertical_blurred', or 'vertical_crop'.
+ * @param {string} [opts.shortsFormat] - 'original', 'vertical_blurred', 'vertical_crop', or 'vertical_moderate'.
  * @param {boolean} [opts.copyrightBypass] - Whether to apply copyright bypass.
  * @returns {{ filterContent: string, hasVideoFilter: boolean, hasAudioFilter: boolean }}
  */
@@ -99,7 +109,7 @@ export function buildFilterScriptContent({ watermarkTextFilePath, fontPath, shor
     audioChains.push(`[0:a]atempo=1.03[a]`);
   }
 
-  // 2. Shorts Formatting (vertical_blurred or vertical_crop)
+  // 2. Shorts Formatting (vertical_blurred, vertical_moderate, or vertical_crop)
   if (shortsFormat === 'vertical_blurred') {
     // format=yuv420p prevents green-tint artifacts from pixel-format mismatch
     // between the blurred background and foreground overlay chains (GPU encoders).
@@ -107,12 +117,61 @@ export function buildFilterScriptContent({ watermarkTextFilePath, fontPath, shor
     videoChains.push(`${currentVideoOut}scale=1080:-1,format=yuv420p[fg]`);
     videoChains.push(`[bg][fg]overlay=0:(main_h-overlay_h)/2:format=yuv420[v_vertical]`);
     currentVideoOut = '[v_vertical]';
+  } else if (shortsFormat === 'vertical_moderate') {
+    // Moderate crop — middle ground between vertical_blurred (large blur bars) and
+    // vertical_crop (aggressive 1.78× upscale). Crops to 50% of the original width
+    // so the upscale factor is only ~1.125× (barely noticeable), while the blurred
+    // background is smaller (~18% top/bottom vs ~34% for vertical_blurred).
+    //
+    // For a 1920×1080 source:
+    //   crop=960:1080 → scale=1080:1215 → content fills 63% of canvas height
+    //   Upscale ratio: 1080/960 = 1.125× (vs 1.78× for vertical_crop)
+    videoChains.push(`${currentVideoOut}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:10,format=yuv420p[bg]`);
+    videoChains.push(`${currentVideoOut}crop=in_w*0.5:in_h,scale=1080:-1,format=yuv420p[fg]`);
+    videoChains.push(`[bg][fg]overlay=0:(main_h-overlay_h)/2:format=yuv420[v_vertical]`);
+    currentVideoOut = '[v_vertical]';
   } else if (shortsFormat === 'vertical_crop') {
     videoChains.push(`${currentVideoOut}crop=in_h*9/16:in_h,scale=1080:1920,format=yuv420p[v_vertical]`);
     currentVideoOut = '[v_vertical]';
   }
 
-  // 3. Watermark
+  // 3. Subtitles (auto-caption via Gemini)
+  if (autoCaptionsSrtPath) {
+    // normalizeFontPath: backslash→forward slash + colon escape (C\:/...)
+    // The `filename=` value is intentionally UNQUOTED. FFmpeg's filtergraph
+    // parser treats backslash as an escape char only in unquoted values; inside
+    // single quotes backslashes are literal, so the `\\:` colon escape produced
+    // by normalizeFontPath would NOT protect the drive-letter colon and parsing
+    // fails (the recurring AUDIT_PROMPT.md auto-caption bug). Unquoted, the same
+    // `\\:` escape works — exactly like the `drawtext=textfile=...` chain below.
+    // `force_style` stays quoted because its commas would otherwise split options.
+    const safeSrtPath = normalizeFontPath(autoCaptionsSrtPath);
+
+    // Professional subtitle style — adaptive per output format.
+    //
+    // IMPORTANT — libass scaling: SRT files without an ASS header use libass
+    // default PlayResY=288, so ALL force_style values (FontSize, MarginV,
+    // Outline, Shadow, etc.) are in ASS script units, NOT output pixels.
+    //
+    // Vertical formats (1080×1920 — TikTok / Reels / Shorts):
+    //   Scale factor: 1920 / 288 = 6.67×
+    //   FontSize=8  → ~53px render (2.8% of 1920) — clean, not overwhelming.
+    //   MarginV=35  → ~233px from bottom → Y=1687 (88% from top), nicely above lower edge.
+    //
+    // Original / landscape format (1920×1080 or source resolution):
+    //   Scale factor: 1080 / 288 = 3.75×
+    //   FontSize=14 → ~53px render (4.9% of 1080) — comfortable on horizontal screen.
+    //   MarginV=40  → ~150px from bottom — standard broadcast lower-third position.
+    const isVertical = shortsFormat === 'vertical_blurred' || shortsFormat === 'vertical_moderate' || shortsFormat === 'vertical_crop';
+    const subStyle = isVertical
+      ? `FontName=Arial,FontSize=8,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,ShadowColour=&H80000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=35`
+      : `FontName=Arial,FontSize=14,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,ShadowColour=&H80000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=40`;
+
+    videoChains.push(`${currentVideoOut}subtitles=filename=${safeSrtPath}:force_style='${subStyle}'[v_subbed]`);
+    currentVideoOut = '[v_subbed]';
+  }
+
+  // 4. Watermark
   if (watermarkTextFilePath && fontPath) {
     const drawtext = buildDrawtextFilter({ textFilePath: watermarkTextFilePath, fontPath, fontSize: watermarkFontSize, shortsFormat });
     videoChains.push(`${currentVideoOut}${drawtext}[v]`);

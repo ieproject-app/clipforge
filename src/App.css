@@ -139,12 +139,12 @@ body {
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-md);
-  padding: 14px;
+  padding: 10px 12px;
   color: #a9b1d6;
   font-size: 13px;
   font-family: 'Fira Code', 'Courier New', monospace;
   resize: vertical;
-  min-height: 180px;
+  min-height: 100px;
   flex: 1;
   transition: all 0.2s ease;
   line-height: 1.5;
@@ -410,7 +410,8 @@ html, body, #root {
 /* Overwrite cards padding and overflow */
 .glass-card {
   padding: 0;
-  max-height: 100%;
+  max-height: none;        /* was 100% — caused content clipping via overflow:hidden */
+  overflow: visible;       /* override the glassmorphism overflow:hidden so children aren't clipped */
   display: flex;
   flex-direction: column;
 }

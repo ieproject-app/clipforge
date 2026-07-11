@@ -41,6 +41,9 @@ export function resolveDownloadedFile(outputPathBase) {
 
 /**
  * Get video metadata using yt-dlp --dump-json
+ *
+ * Includes a 30-second timeout to prevent hanging on invalid/malicious URLs
+ * that cause yt-dlp to stall (DNS resolution, connection timeout, etc.).
  */
 export function getMetadata(url) {
     return new Promise((resolve, reject) => {
@@ -58,6 +61,15 @@ export function getMetadata(url) {
 
         let stdout = '';
         let stderr = '';
+        let settled = false;
+
+        // 30-second timeout to prevent hanging on suspicious/invalid URLs
+        const timeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            proc.kill('SIGTERM');
+            reject(new Error(`yt-dlp metadata timed out after 30s for URL: ${url}`));
+        }, 30000);
 
         proc.stdout.on('data', (data) => {
             stdout += data.toString();
@@ -68,6 +80,9 @@ export function getMetadata(url) {
         });
 
         proc.on('close', (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
             if (code !== 0) {
                 return reject(new Error(`yt-dlp metadata failed: ${stderr}`));
             }
@@ -87,6 +102,9 @@ export function getMetadata(url) {
         });
 
         proc.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
             reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
         });
     });
@@ -106,7 +124,9 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
 
         let formatStr = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
 
-        if (quality === '1080p') {
+        if (quality === '2160p') {
+            formatStr = 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/best[height<=2160][ext=mp4]/best';
+        } else if (quality === '1080p') {
             formatStr = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best';
         } else if (quality === '720p') {
             formatStr = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best';
@@ -127,8 +147,12 @@ export function downloadVideo(url, outputPath, quality, onProgress) {
             '--progress',
             '--force-ipv4',
             '--no-check-certificates',
-            '--retries', '3',
-            '--fragment-retries', '5',
+            '--retries', '10',
+            '--fragment-retries', '10',
+            '--extractor-retries', '5',
+            '--sleep-requests', '2',
+            '--sleep-interval', '5',
+            '--max-sleep-interval', '60',
             '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             '--extractor-args', 'youtube:player_client=android,web',
             '-o', outputTemplate,
@@ -234,9 +258,10 @@ export function extractVideoIdFromUrl(url) {
  * @param {string} url        - YouTube video URL.
  * @param {string} cacheDir   - Directory to store cached video files.
  * @param {Function} [onProgress] - Optional progress callback `(pct) => void`.
+ * @param {string} [quality='1080p'] - Video resolution: '2160p', '1080p', '720p', '480p', or '360p'.
  * @returns {Promise<string>} - Resolved path to the (possibly cached) video file.
  */
-export async function downloadWithCache(url, cacheDir, onProgress) {
+export async function downloadWithCache(url, cacheDir, onProgress, quality = '1080p') {
     const videoId = extractVideoIdFromUrl(url);
 
     if (videoId) {
@@ -250,7 +275,7 @@ export async function downloadWithCache(url, cacheDir, onProgress) {
         // actual extension yt-dlp wrote before renaming to the canonical .mp4 name.
         fs.mkdirSync(cacheDir, { recursive: true });
         const tempBase = path.join(cacheDir, `${videoId}_dl`);
-        await downloadVideo(url, tempBase, '1080p', onProgress);
+        await downloadVideo(url, tempBase, quality, onProgress);
         const downloadedPath = resolveDownloadedFile(tempBase);
 
         // Rename to the canonical cache filename so future calls hit the cache.
@@ -263,6 +288,6 @@ export async function downloadWithCache(url, cacheDir, onProgress) {
     // No video ID extractable — fall back to uncached download into cacheDir.
     fs.mkdirSync(cacheDir, { recursive: true });
     const tempBase = path.join(cacheDir, `nocache_${Date.now()}`);
-    await downloadVideo(url, tempBase, '1080p', onProgress);
+    await downloadVideo(url, tempBase, quality, onProgress);
     return resolveDownloadedFile(tempBase);
 }

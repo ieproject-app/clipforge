@@ -11,6 +11,7 @@ import { cutSegment, mergeSegments } from './server/services/ffmpeg.js';
 import { validateSegment } from './server/services/filterHelpers.js';
 import { writeJobLog } from './server/services/logger.js';
 import { VIDEO_ENCODER, LINKS_FILE } from './server/services/platform.js';
+import { downloadAutoSubs, parseVttToSubtitles, extractClipSubtitles } from './server/services/youtubeSubs.js';
 
 // Setup environment for CLI mode
 process.env.CLI_MODE = 'true';
@@ -34,9 +35,15 @@ ${chalk.bold('Parameters:')}
   ${chalk.green('<YOUTUBE_URL>')}            URL of the long YouTube video to process.
   ${chalk.green('<PATH_TO_JSON_SEGMENTS>')}  Path to a JSON file containing clips timestamps.
   ${chalk.green('[EXPORT_DIR]')}             Optional. Directory to save the final shorts (Defaults to "D:\\YT Shorts").
-  ${chalk.green('[SHORTS_FORMAT]')}          Optional. Format layout: "vertical_blurred", "original", "vertical_crop" (Defaults to "vertical_blurred").
+  ${chalk.green('[SHORTS_FORMAT]')}          Optional. Format layout: "vertical_blurred", "original", "vertical_crop", "vertical_moderate" (Defaults to "vertical_blurred").
   ${chalk.green('[COPYRIGHT_BYPASS]')}       Optional. Mirror and adjust speed: "true" or "false" (Defaults to "true").
   ${chalk.green('[MERGE_CLIPS]')}            Optional. Combine all clips into a single compilation file: "true" or "false" (Defaults to "false").
+
+${chalk.bold('Flags:')}
+  ${chalk.green('--cpu-friendly')}           Limit to single CPU core (slower but compatible).
+  ${chalk.green('--auto-captions')}          Download YouTube auto-captions for accurate subtitles.
+  ${chalk.green('--4k')}                     Download source video in 4K (2160p) for sharper center crop quality. Default is 1080p.
+  ${chalk.green('--no-link-db')}             Skip read/write of Link Manager database (manual mode).
 
 ${chalk.bold('JSON Segments Format Example (Single or Multi-URL):')}
   [
@@ -97,14 +104,58 @@ async function checkForUpdates(currentVersion) {
   }
 }
 
+/**
+ * Convert subtitle array to SRT file format.
+ *
+ * Before writing, overlapping entries are sanitised: each entry's `end` is
+ * clamped so it does not exceed the `start` of the next entry (with a 50ms
+ * guard gap). This prevents libass/FFmpeg from rendering two subtitle lines
+ * simultaneously, which looks messy on screen.
+ *
+ * @param {Array<{start: number, end: number, text: string}>} subtitles
+ * @param {string} srtPath - Output SRT file path
+ */
+function subtitlesToSrt(subtitles, srtPath) {
+  // Sanitise overlaps: clamp each entry's end so it doesn't cross into the
+  // next entry's start. Minimum guard gap between entries = 50ms.
+  const MIN_GAP = 0.05;
+  for (let i = 0; i < subtitles.length - 1; i++) {
+    const maxEnd = subtitles[i + 1].start - MIN_GAP;
+    if (subtitles[i].end > maxEnd) {
+      subtitles[i].end = Math.max(subtitles[i].start + 0.1, maxEnd);
+    }
+  }
+
+  const lines = [];
+  subtitles.forEach((sub, i) => {
+    const fmt = (s) => {
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = Math.floor(s % 60);
+      const ms = Math.round((s % 1) * 1000);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    };
+    lines.push(`${i + 1}`);
+    lines.push(`${fmt(sub.start)} --> ${fmt(sub.end)}`);
+    lines.push(sub.text);
+    lines.push('');
+  });
+  fs.writeFileSync(srtPath, lines.join('\n'), 'utf8');
+}
+
 async function main() {
   const args = process.argv.slice(2);
   
   // Parse flags
   const cpuFriendly = args.includes('--cpu-friendly');
   const noUpdateCheck = args.includes('--no-update-check');
+  const autoCaptions = args.includes('--auto-captions');
+  const quality4k = args.includes('--4k');
+  // --no-link-db: skip loading/writing the Link Manager database. Use this for
+  // manual one-off runs from the Generator UI that shouldn't pollute the link
+  // database (e.g. testing, re-rendering a clip without tracking it as "done").
+  const noLinkDb = args.includes('--no-link-db');
   
-  // Filter out flag parameters to get positional arguments
   const positionalArgs = args.filter(a => !a.startsWith('--'));
   
   if (positionalArgs.length < 1) {
@@ -160,6 +211,23 @@ async function main() {
     }
   } catch (err) {
     console.error(`\x1b[31mError parsing segments JSON: ${err.message}\x1b[0m`);
+    // Hint the most common Gemini-generated failure: a literal double-quote
+    // inside a subtitle text value (e.g. {"text": ""Ali...""}) breaks JSON.parse
+    // because the inner " closes the string early. Look for the line/col reported
+    // above and either escape those quotes as \" or replace them with single quotes.
+    const m = String(err.message).match(/position (\d+)/);
+    if (m) {
+      try {
+        const raw = fs.readFileSync(segmentsPath, 'utf8');
+        const pos = parseInt(m[1], 10);
+        const before = raw.slice(0, pos);
+        const lineNo = before.split('\n').length;
+        const line = raw.split('\n')[lineNo - 1] || '';
+        if (line.includes('""') || /text"?\s*:\s*"[^,\]}]*""/.test(line)) {
+          console.error(`\x1b[33m  Hint: line ${lineNo} contains a literal double-quote inside a string value.\n         Replace inner " with ' (single quote) or escape as \\\". Common when Gemini wraps dialogue in straight quotes.\x1b[0m`);
+        }
+      } catch { /* ignore hint failure */ }
+    }
     process.exit(1);
   }
 
@@ -225,17 +293,26 @@ async function main() {
   console.log(`🔗 Compilation       : ${mergeClips}`);
   console.log(`🍃 CPU Mode          : ${cpuFriendly ? 'CPU-Friendly (1 Core ✓)' : 'Standard (All Cores)'}`);
   console.log(`🎞️ Videos            : ${urls.length}`);
-  console.log(`⚡ Video Encoder     : ${VIDEO_ENCODER === 'libx264' ? 'libx264 (CPU)' : chalk.green(`${VIDEO_ENCODER} (GPU ✓)`)}`);
+  console.log(`ℹ️ Video Encoder     : ${VIDEO_ENCODER === 'libx264' ? 'libx264 (CPU)' : chalk.green(`${VIDEO_ENCODER} (GPU ✓)`)}`);
+  console.log(`📺 Source Quality    : ${quality4k ? chalk.green('4K (2160p) ✨') : '1080p'}`);
+  console.log(`🇮🇩 Auto-Captions     : ${autoCaptions ? chalk.green('Enabled (YouTube auto-sub → Gemini fallback)') : chalk.dim('Disabled')}`);
+  if (noLinkDb) {
+    console.log(`🔗 Link Database     : ${chalk.dim('Skipped (--no-link-db)')}`);
+  }
 
-  // Load links database once at start to check which ones are done
+  // Load links database once at start to check which ones are done.
+  // Skipped in --no-link-db mode (manual runs from the Generator UI that
+  // shouldn't interact with the Link Manager database).
   let linksDb = [];
-  try {
-    if (fs.existsSync(LINKS_FILE)) {
-      const content = fs.readFileSync(LINKS_FILE, 'utf8');
-      linksDb = parseLinksContent(content);
+  if (!noLinkDb) {
+    try {
+      if (fs.existsSync(LINKS_FILE)) {
+        const content = fs.readFileSync(LINKS_FILE, 'utf8');
+        linksDb = parseLinksContent(content);
+      }
+    } catch (err) {
+      console.warn(`\x1b[33mWarning: Failed to load links database for validation: ${err.message}\x1b[0m`);
     }
-  } catch (err) {
-    console.warn(`\x1b[33mWarning: Failed to load links database for validation: ${err.message}\x1b[0m`);
   }
 
   const allSegmentPaths = [];
@@ -258,11 +335,14 @@ async function main() {
       const currentUrl = urls[u];
       const currentSegments = groups[currentUrl];
 
-      // Skip if already marked as completed in links database
-      const dbMatch = linksDb.find(l => l.url === currentUrl);
-      if (dbMatch && dbMatch.status === 'done') {
-        console.log(chalk.dim(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl} — Skipped (already done ✓)`));
-        continue;
+      // Skip if already marked as completed in links database.
+      // Skipped in --no-link-db mode (manual runs don't check the database).
+      if (!noLinkDb) {
+        const dbMatch = linksDb.find(l => l.url === currentUrl);
+        if (dbMatch && dbMatch.status === 'done') {
+          console.log(chalk.dim(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl} — Skipped (already done ✓)`));
+          continue;
+        }
       }
 
       console.log(chalk.cyan(`\n📹 [Video ${u + 1}/${urls.length}] ${currentUrl}`));
@@ -271,9 +351,22 @@ async function main() {
       const jobDir = path.resolve(__dirname, 'server', 'temp', jobId);
       fs.mkdirSync(jobDir, { recursive: true });
 
+      // Per-clip auto-caption SRT path (Bug #3 fix). Hoisted OUT of the try body
+      // so the finally block below can see it — `try`/`finally` are separate
+      // block scopes in JS, so a `let` declared inside try is invisible to finally
+      // (the ReferenceError from the previous Bug #2 fix attempt). This is now a
+      // PER-CLIP path (one SRT per clip, clip-relative timestamps), not a shared
+      // per-video cache: Gemini subtitles are clip-relative (0.0 = clip start),
+      // and the cut clip's timeline is 0-based (input seek + PTS reset), so the
+      // SRT timestamps must stay clip-relative to fall inside the clip window.
+      // Generating one shared full-video-offset SRT made every clip's subtitle
+      // entries land OUTSIDE the 0..clipDuration timeline — no pixels burned.
+      let captionSrtPath = null;
+      let metaSpinner;
+
       try {
         // Fetch metadata with spinner
-        const metaSpinner = ora('Fetching video metadata...').start();
+        metaSpinner = ora('Fetching video metadata...').start();
         const meta = await getMetadata(currentUrl);
         const videoDuration = meta.duration || 0;
         const uploader = meta.uploader || 'Unknown';
@@ -282,9 +375,15 @@ async function main() {
         let durationFailed = false;
         currentSegments.forEach((seg, i) => {
           const end = Number(seg.end);
-          if (end > videoDuration) {
+          // Allow 2 second tolerance for Gemini rounding
+          if (end > videoDuration + 2) {
             console.error(chalk.red(`\nError in segment ${i + 1} "${seg.title || 'Untitled'}": end (${end}s) exceeds video duration (${videoDuration}s)`));
             durationFailed = true;
+          }
+          // Auto-cap end time to video duration if within tolerance
+          if (end > videoDuration && end <= videoDuration + 2) {
+            seg.end = videoDuration;
+            console.log(chalk.yellow(`  ⚠ Segment ${i + 1}: end capped to video duration (${end}s → ${videoDuration}s)`));
           }
         });
         if (durationFailed) {
@@ -307,6 +406,7 @@ async function main() {
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
             let cacheHitShown = false;
+            const dlQuality = quality4k ? '2160p' : '1080p';
             resolvedSourcePath = await downloadWithCache(currentUrl, cacheDir, (pct, info) => {
               if (info && info.isCacheHit) {
                 if (!cacheHitShown) {
@@ -340,19 +440,49 @@ async function main() {
                 dlBar.stop();
                 dlBar = null;
               }
-            });
+            }, dlQuality);
             downloadError = null;
             break;
           } catch (err) {
             downloadError = err;
             if (dlBar) { dlBar.stop(); dlBar = null; }
             if (attempt < 2) {
-              console.log(chalk.yellow(`  ⚠ Attempt ${attempt} failed, retrying in 5s... (${err.message})`));
-              await new Promise(r => setTimeout(r, 5000));
+              const waitSecs = attempt === 1 ? 30 : 60;
+              console.log(chalk.yellow(`  ⚠ Attempt ${attempt} failed, retrying in ${waitSecs}s... (${err.message})`));
+              await new Promise(r => setTimeout(r, waitSecs * 1000));
             }
           }
         }
         if (downloadError) throw downloadError;
+
+        // Auto-caption: download YouTube auto-generated subtitles for accurate
+        // word-level timing. YouTube's speech recognition is far more precise than
+        // Gemini's synthetic timestamps (Gemini doesn't hear audio). If auto-subs
+        // are unavailable (rare for Indonesian content), we fall back to Gemini's
+        // `subtitles` field in the per-clip loop below.
+        let fullVideoSubs = null;
+        if (autoCaptions) {
+          const subSpinner = ora('  Fetching YouTube auto-captions...').start();
+          try {
+            // Try Indonesian first, then id-auto variant, then English as last resort
+            const subPath = await downloadAutoSubs(currentUrl, cacheDir, ['id', 'id-auto', 'en']);
+            if (subPath) {
+              fullVideoSubs = parseVttToSubtitles(subPath);
+              if (fullVideoSubs.length > 0) {
+                subSpinner.succeed(`  [Auto-Caption] ✅ YouTube auto-sub loaded (${fullVideoSubs.length} entries, word-level timing)`);
+              } else {
+                subSpinner.warn('  [Auto-Caption] Auto-sub file empty, will use Gemini subtitles');
+                fullVideoSubs = null;
+              }
+            } else {
+              subSpinner.warn('  [Auto-Caption] No YouTube auto-sub available, will use Gemini subtitles');
+              fullVideoSubs = null;
+            }
+          } catch (e) {
+            subSpinner.warn(`  [Auto-Caption] Auto-sub download failed (${e.message}), will use Gemini subtitles`);
+            fullVideoSubs = null;
+          }
+        }
 
         // Process segments with modern per-clip progress bars
         for (let i = 0; i < currentSegments.length; i++) {
@@ -429,10 +559,44 @@ async function main() {
             }
           }, 500);
 
+          // Generate per-clip auto-caption SRT (Bug #3 fix + YouTube auto-sub).
+          // Priority: YouTube auto-sub (accurate word-level timing) → Gemini
+          // subtitles (fallback, less accurate timing). Both produce clip-relative
+          // timestamps so subtitle entries fall inside the clip's 0-based timeline.
+          captionSrtPath = null;
+          if (autoCaptions) {
+            let clipSubs = null;
+            if (fullVideoSubs && fullVideoSubs.length > 0) {
+              // YouTube auto-sub: extract entries within this clip's range,
+              // offset to clip-relative timestamps.
+              clipSubs = extractClipSubtitles(fullVideoSubs, start, end);
+            } else if (seg.subtitles && Array.isArray(seg.subtitles) && seg.subtitles.length > 0) {
+              // Gemini fallback: use clip-relative timestamps as-is (already 0-based).
+              clipSubs = seg.subtitles;
+            }
+            if (clipSubs && clipSubs.length > 0) {
+              captionSrtPath = path.join(batchTempDir, `subtitles_${u}_${i}.srt`);
+              subtitlesToSrt(clipSubs, captionSrtPath);
+              // Validate SRT was written successfully before passing to FFmpeg
+              try {
+                const srtStat = fs.statSync(captionSrtPath);
+                if (srtStat.size === 0) {
+                  console.log(chalk.yellow(`  ⚠ ${clipLabel} SRT file is empty after write — burning without captions`));
+                  captionSrtPath = null;
+                }
+              } catch {
+                console.log(chalk.yellow(`  ⚠ ${clipLabel} SRT file write failed — burning without captions`));
+                captionSrtPath = null;
+              }
+            } else {
+              console.log(chalk.yellow(`  ⚠ ${clipLabel} No subtitle entries in clip range [${start}s–${end}s] — burning without captions`));
+            }
+          }
+
           await cutSegment(
             resolvedSourcePath, start, end, tempSegmentPath,
             watermarkText, shortsFormat, copyrightBypass,
-            18, false, cpuFriendly, onProgress
+            18, captionSrtPath, cpuFriendly, onProgress
           );
 
           clearInterval(fallbackTimer);
@@ -500,13 +664,28 @@ async function main() {
           }
         }
         successfullyProcessedUrls.push(currentUrl);
+      } catch (err) {
+        if (metaSpinner) metaSpinner.fail('Failed');
+        console.error(chalk.red(`\n❌ [Video ${u + 1}/${urls.length}] Failed: ${err.message}`));
+        // Skip this URL and continue with the next one in the batch
+        continue;
       } finally {
         try {
           if (fs.existsSync(jobDir)) {
             fs.rmSync(jobDir, { recursive: true, force: true });
           }
         } catch {}
-      }
+        // Per-clip SRT cleanup (Bug #3 fix). Each clip's SRT lives in
+        // batchTempDir (cleaned wholesale at the end of main()), so explicit
+        // per-clip removal is optional; included defensively to avoid leftover
+        // SRT files if batchTempDir cleanup is skipped on an early exit path.
+        // `captionSrtPath` is hoisted before the try (visible to finally); use
+        // force:true so this is a no-op when auto-captions disabled or the clip
+        // had no subtitles (captionSrtPath stays null).
+        if (captionSrtPath) {
+          try { fs.rmSync(captionSrtPath, { force: true }); } catch {}
+        }
+    }
     }
 
     // If Compilation Mode is active, merge all segments together
@@ -565,35 +744,37 @@ async function main() {
     // Trigger system beep notification
     process.stdout.write('\u0007');
     
-    // Update links database for successfully processed URLs and revert incomplete/failed processing ones
-    try {
-      if (fs.existsSync(LINKS_FILE)) {
-        const content = fs.readFileSync(LINKS_FILE, 'utf8');
-        const currentLinks = parseLinksContent(content);
-        let updatedCount = 0;
-        let revertedCount = 0;
-        
-        // 1. Mark completed ones as done
-        for (const u of successfullyProcessedUrls) {
-          const target = currentLinks.find(l => l.url === u);
-          if (target && target.status !== 'done') {
-            target.status = 'done';
-            updatedCount++;
-          }
-        }
-
-        // 2. Revert incomplete ones that were marked processing
-        for (const u of urls) {
-          if (!successfullyProcessedUrls.includes(u)) {
+    // Update links database for successfully processed URLs and revert incomplete/failed processing ones.
+    // Skipped in --no-link-db mode (manual runs don't write to the database).
+    if (!noLinkDb) {
+      try {
+        if (fs.existsSync(LINKS_FILE)) {
+          const content = fs.readFileSync(LINKS_FILE, 'utf8');
+          const currentLinks = parseLinksContent(content);
+          let updatedCount = 0;
+          let revertedCount = 0;
+          
+          // 1. Mark completed ones as done
+          for (const u of successfullyProcessedUrls) {
             const target = currentLinks.find(l => l.url === u);
-            if (target && target.status === 'processing') {
-              target.status = 'pending';
-              revertedCount++;
+            if (target && target.status !== 'done') {
+              target.status = 'done';
+              updatedCount++;
             }
           }
-        }
-        
-        if (updatedCount > 0 || revertedCount > 0) {
+
+          // 2. Revert incomplete ones that were marked processing
+          for (const u of urls) {
+            if (!successfullyProcessedUrls.includes(u)) {
+              const target = currentLinks.find(l => l.url === u);
+              if (target && target.status === 'processing') {
+                target.status = 'pending';
+                revertedCount++;
+              }
+            }
+          }
+          
+          if (updatedCount > 0 || revertedCount > 0) {
           const lines = [];
           for (const link of currentLinks) {
             const statusBox = link.status === 'done' ? '[Done]' : 
@@ -601,7 +782,10 @@ async function main() {
             lines.push(`${statusBox} ${link.title}`);
             lines.push(`    ${link.url}`);
           }
-          fs.writeFileSync(LINKS_FILE, lines.join('\n') + '\n', 'utf8');
+          // Atomic write: temp file → rename (prevents race condition with server)
+          const tmpPath = LINKS_FILE + '.tmp';
+          fs.writeFileSync(tmpPath, lines.join('\n') + '\n', 'utf8');
+          fs.renameSync(tmpPath, LINKS_FILE);
           if (updatedCount > 0) {
             console.log(chalk.green(`\n✔ Updated ${updatedCount} links to 'done' in database ✓`));
           }
@@ -613,12 +797,13 @@ async function main() {
     } catch (dbErr) {
       console.error(chalk.yellow(`\nWarning: Failed to update database status: ${dbErr.message}`));
     }
+    } // end if (!noLinkDb)
 
     console.log(chalk.magenta(`\n=== Job Finished ===`));
     const skippedNote = totalClipsSkipped > 0 ? ` ⏭ ${totalClipsSkipped} skipped` : '';
     console.log(`🔗 Completed Batch of ${chalk.cyan(urls.length)} URLs (${chalk.green(totalClipsProcessed)} processed${skippedNote}):`);
     urls.forEach(u => {
-      const dbMatch = linksDb.find(l => l.url === u);
+      const dbMatch = noLinkDb ? null : linksDb.find(l => l.url === u);
       if (dbMatch && dbMatch.status === 'done' && !successfullyProcessedUrls.includes(u)) {
         console.log(chalk.yellow(`  - ${u} (Skipped — already completed ✓)`));
       } else {

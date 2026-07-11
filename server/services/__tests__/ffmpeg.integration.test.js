@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { FFMPEG_PATH } from '../platform.js'
+import { FFMPEG_PATH, getFontPath } from '../platform.js'
 import { cutSegment, mergeSegments } from '../ffmpeg.js'
 
 // Integration test (Task 9.1): watermarked cut with a hostile title.
@@ -144,5 +144,120 @@ describe('ffmpeg integration: watermarked cut with a hostile title', () => {
         // Verify the concat list file next to output was deleted
         const listPath = mergedPath.replace('.mp4', '_list.txt')
         expect(fs.existsSync(listPath)).toBe(false)
+    }, 60000)
+
+    // Integration test (auto-caption regression, AUDIT_PROMPT.md / ERROR_LOG.md #8):
+    // burn a real SRT file into a clip via the `subtitles=` filter.
+    //
+    // Reproduces the recurring auto-caption failure: FFmpeg rejected the entire
+    // `-filter_complex_script` because the `subtitles=filename='...'` value was
+    // single-quoted, which made the `\\:` colon escape from normalizeFontPath
+    // ineffective (backslashes are literal inside single quotes). With the fix,
+    // `filename=` is unquoted and the filter chain renders successfully — the
+    // pipeline returns { watermarked: true } instead of falling back to a clean
+    // cut. This test guards against reintroducing that quote/escape mismatch.
+    //
+    // The subtitle burn requires libass (present in the gyan.dev essentials
+    // build used by imageio-ffmpeg) and an available font. If fonts are absent
+    // the run still falls back to a clean cut, so we assert the output exists
+    // and is non-empty regardless; the stronger { watermarked: true } assertion
+    // is skipped only when the environment lacks the prerequisite font.
+    it('burns a real SRT file into the clip via the subtitles filter (no fallback)', async () => {
+        if (!ffmpegAvailable) {
+            // eslint-disable-next-line no-console
+            console.warn('FFmpeg not available; skipping auto-caption integration test.')
+            return
+        }
+
+        // Write a minimal valid SRT (UTF-8, no BOM, LF line endings).
+        const srtPath = path.join(tmpDir, 'captions.srt')
+        const srtContent = '1\n00:00:00,000 --> 00:00:02,000\nHello subtitles\n\n'
+        fs.writeFileSync(srtPath, srtContent, 'utf8')
+
+        const outputPath = path.join(tmpDir, 'captioned.mp4')
+        const fontPath = getFontPath()
+
+        // Cut a 2s segment with watermark + the auto-caption SRT path. Both the
+        // drawtext watermark and the subtitles filter live in the same filter
+        // chain; if either fails to parse, the whole chain is rejected and the
+        // pipeline falls back to a clean cut (watermarked: false).
+        const result = await cutSegment(
+            inputPath, 0, 2, outputPath,
+            'Source: Caption Test', 'original', false,
+            18, srtPath, false, null,
+        )
+
+        expect(result).toBeTypeOf('object')
+        expect(typeof result.watermarked).toBe('boolean')
+
+        // When a font is available, the filter chain (watermark + subtitles) must
+        // render without falling back — this is the core regression assertion.
+        if (fontPath) {
+            expect(result.watermarked).toBe(true)
+        }
+
+        // Key assertion regardless of font availability: the segment exists and
+        // is non-empty, proving the pipeline completed (filter or fallback).
+        expect(fs.existsSync(outputPath)).toBe(true)
+        expect(fs.statSync(outputPath).size).toBeGreaterThan(0)
+    }, 60000)
+
+    // Multi-clip regression test (Bug #2, AUDIT_PROMPT.md / ERROR_LOG.md #9):
+    // `cutSegment`'s `finally` block used to delete `autoCaptionsSrtPath`, a
+    // SHARED caller-owned SRT generated once per video and reused by every
+    // clip. That deletion broke clip 2+ ("[Parsed_subtitles] Unable to open
+    // ... .srt: No such file or directory") once Bug #1 was fixed and clip 1
+    // actually opened/burned the SRT. This test calls `cutSegment` twice with
+    // the SAME SRT path and asserts both the SRT and both outputs survive —
+    // guarding against reintroducing that premature deletion.
+    it('does not delete the shared auto-caption SRT between consecutive cutSegment calls (multi-clip)', async () => {
+        if (!ffmpegAvailable) {
+            // eslint-disable-next-line no-console
+            console.warn('FFmpeg not available; skipping multi-clip auto-caption regression test.')
+            return
+        }
+
+        // Shared SRT, generated once by the caller (CLI) and intentionally reused
+        // for both clips — mirrors the real CLI loop in cli.js.
+        const sharedSrtPath = path.join(tmpDir, 'shared.srt')
+        const srtContent = '1\n00:00:00,000 --> 00:00:02,000\nClip A subtitle\n\n'
+        fs.writeFileSync(sharedSrtPath, srtContent, 'utf8')
+
+        const out1 = path.join(tmpDir, 'clip_a.mp4')
+        const out2 = path.join(tmpDir, 'clip_b.mp4')
+        const fontPath = getFontPath()
+
+        // Clip A (0s-2s): should burn the SRT and leave it intact.
+        const result1 = await cutSegment(
+            inputPath, 0, 2, out1,
+            'Source: Clip A', 'original', false,
+            18, sharedSrtPath, false, null,
+        )
+        expect(fs.existsSync(out1)).toBe(true)
+        expect(fs.statSync(out1).size).toBeGreaterThan(0)
+        expect(fs.existsSync(sharedSrtPath)).toBe(true)
+
+        // Clip B (0s-2s): reuses the SAME SRT. Before Bug #2 fix this failed
+        // with [Parsed_subtitles] Unable to open ... .srt and fell back to a
+        // clean cut. Assert the SRT still exists so the filter can parse it.
+        const result2 = await cutSegment(
+            inputPath, 0, 2, out2,
+            'Source: Clip B', 'original', false,
+            18, sharedSrtPath, false, null,
+        )
+        expect(fs.existsSync(out2)).toBe(true)
+        expect(fs.statSync(out2).size).toBeGreaterThan(0)
+
+        // If a font is available, both clips must render the filter chain
+        // (watermark + subtitles) WITHOUT falling back to a clean cut. A
+        // `watermarked: false` here would indicate Bug #2 has regressed: the
+        // SRT was deleted after clip A, so clip B's `subtitles=` filter fails.
+        if (fontPath) {
+            expect(result1.watermarked).toBe(true)
+            expect(result2.watermarked).toBe(true)
+        }
+
+        // The shared SRT must survive both calls — caller-owned lifecycle.
+        expect(fs.existsSync(sharedSrtPath)).toBe(true)
     }, 60000)
 })

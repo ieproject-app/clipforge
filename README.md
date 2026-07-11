@@ -164,8 +164,9 @@ D:\YT SHORTS\
 
 | Format | Resolution | Quality | Best For |
 |---|---|---|---|
-| **Vertical Center Crop** | 1080×1920 (9:16) | CRF 20 ✨ | TikTok, Reels, Shorts |
-| **Vertical Blurred BG** | 1080×1920 (9:16) | CRF 23 | Shorts with context |
+| **Vertical Center Crop** | 1080×1920 (9:16) | CRF 20 ✨ | Full-zoom, no blur |
+| **Vertical Moderate Crop** | 1080×1920 (9:16) | CRF 23 | Minimal upscale + smaller blur bars |
+| **Vertical Blurred BG** | 1080×1920 (9:16) | CRF 23 | Full context, larger blur bars |
 | **Original Widescreen** | Source resolution | CRF 23 | Full clips |
 
 ---
@@ -242,7 +243,7 @@ node cli.js <JSON_SEGMENTS> [EXPORT_DIR] [SHORTS_FORMAT] [COPYRIGHT_BYPASS] [MER
 Arguments:
   JSON_SEGMENTS      Path to segments JSON (batch mode)
   EXPORT_DIR         Output directory (default: "D:\YT Shorts")
-  SHORTS_FORMAT      vertical_crop | vertical_blurred | original
+  SHORTS_FORMAT      vertical_crop | vertical_moderate | vertical_blurred | original
   COPYRIGHT_BYPASS   true | false (default: true)
   MERGE_CLIPS        true | false (default: false)
   --cpu-friendly     Limit to single CPU core

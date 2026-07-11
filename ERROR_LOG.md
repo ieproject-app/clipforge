@@ -168,6 +168,68 @@ taskkill -f -im node.exe
 
 ---
 
+## 8. 🐛 FFmpeg subtitles filter: Quote vs drawtext Escape Rule Mismatch (Auto-Caption)
+
+**Error:**
+```
+[AVFilterGraph] No option name near '/Users/.../subtitles.srt:force_style=FontSize=20'
+[AVFilterGraph] Error parsing filterchain '[0:v]subtitles=filename='C\:/.../sub.srt':...'
+Failed to set value '...filter.txt' for option 'filter_complex_script': Invalid argument
+Error parsing global options: Invalid argument
+Watermark or subtitle render failed, falling back to clean cut
+```
+
+**Gejala:** Auto-caption (Gemini → SRT → FFmpeg `subtitles=` filter) gagal 5+ percobaan. Clip berhasil dibuat tapi **tanpa caption dan tanpa watermark** — karena keduanya berada di filter chain yang sama, dan FFmpeg menolak seluruh `-filter_complex_script` saat filter `subtitles=` gagal parse. Fallback clean cut (tanpa filter) berhasil, sehingga clip tetap ada tapi polos.
+
+**Penyebab Root Cause:**
+
+FFmpeg filtergraph memiliki **dua aturan escaping yang berbeda** tergantung apakah value di-quote atau tidak:
+
+| Konteks | Backslash | Colon escape yang bekerja |
+|---------|-----------|---------------------------|
+| **Unquoted** (`textfile=C\:/...`) | Escape char | `\\:` (double) — backslash melindungi colon |
+| **Single-quoted** (`filename='C\:/...'`) | **Literal** | `\:` (single) — backslash literal, colon tetap mentah |
+
+Filter `drawtext` di kode pakai **unquoted** (`textfile=C\:/...`) → `normalizeFontPath()` menghasilkan `C\:/` (double backslash) → **berhasil**.
+
+Tapi filter `subtitles` di kode pakai **single-quoted** (`filename='C\:/...'`) dengan output `normalizeFontPath()` yang sama (`C\:/`) → di dalam single-quote, backslash bersifat **literal** → `\\:` tidak meng-escape colon → colon memecah parsing option FFmpeg → **gagal**.
+
+Inilah "Core Mystery" di AUDIT_PROMPT.md: `drawtext` bekerja tapi `subtitles` + `drawtext` gagal, padahal keduanya pakai helper escaping yang sama. Bedanya hanya: `drawtext` unquoted, `subtitles` quoted.
+
+**Konfirmasi Empiris (diagnostik langsung ke FFmpeg 7.1):**
+
+| Bentuk `filename=` | Quote? | Hasil |
+|--------------------|--------|-------|
+| `filename='C\:/...'` (kode lama) | ✅ quoted | ❌ FAIL |
+| `filename=C\:/...` (fix) | ❌ unquoted | ✅ SUCCESS |
+| `filename='C\:/...'` (single backslash) | ✅ quoted | ✅ SUCCESS |
+
+Diverifikasi end-to-end pada encoder **libx264 (CPU)** dan **h264_qsv (GPU)**.
+
+**Fix:**
+
+Buang single-quote di sekitar `filename=` di `filterHelpers.js`, pertahankan quote pada `force_style` (komanya butuh proteksi):
+
+```js
+// DARI (broken):
+subtitles=filename='${safeSrtPath}':force_style='...'
+// KE (fixed):
+subtitles=filename=${safeSrtPath}:force_style='...'
+```
+
+Sekarang `filename` unquoted (konsisten dengan `drawtext=textfile=...`), dan `normalizeFontPath()` tetap menghasilkan `C\:/` yang valid untuk unquoted value.
+
+**Pelajaran:**
+
+1. FFmpeg filtergraph **bukan** aturan escaping tunggal. Quoted vs unquoted value punya perilaku backslash yang **berbeda** — helper escaping harus tahu konteks pemakaian.
+2. Pesan error "truncated option name `filtet`" di log CLI adalah **artefak pemotongan tampilan progress bar**, bukan bug FFmpeg nyata. Error sebenarnya adalah "Failed to set value for option 'filter_complex_script': Invalid argument" karena isi script tidak bisa di-parse.
+3. Filter `subtitles`, `ass`, dan `drawtext` **semuanya tersedia** di build imageio-ffmpeg (gyan.dev essentials, libass included) — bukan masalah filter hilang.
+4. Test yang hanya cek `toContain("subtitles=")` **bisa lolos padahal broken** — assertion harus spesifik (e.g. `not.toMatch(/filename='/)` untuk menangkap quote mismatch).
+
+**Files:** `server/services/filterHelpers.js`, `server/services/__tests__/filterHelpers.buildFilterScriptContent.test.js`, `server/services/__tests__/ffmpeg.integration.test.js`
+
+---
+
 ## Ringkasan
 
 | # | Error | Kategori | Status |
@@ -179,3 +241,4 @@ taskkill -f -im node.exe
 | 5 | (Merged with #4 — Windows path escaping) | — | ✅ |
 | 6 | Vite proxy timeout | Development | 📝 On demand |
 | 7 | EADDRINUSE port conflict | Operational | ✅ Workaround |
+| 8 | subtitles filter quote vs drawtext escape mismatch (auto-caption) | FFmpeg filter escaping | ✅ Fixed |

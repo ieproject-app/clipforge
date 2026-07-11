@@ -82,7 +82,10 @@ function writeLinksFile(filePath, links) {
         lines.push(`    ${link.url}`);
         lines.push(``);
     }
-    fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+    // Atomic write: write to temp file first, then rename (prevents race condition)
+    const tmpPath = filePath + '.tmp';
+    fs.writeFileSync(tmpPath, lines.join('\n'), 'utf8');
+    fs.renameSync(tmpPath, filePath);
 }
 
 // ============ API ENDPOINTS ============
@@ -189,7 +192,7 @@ app.delete('/api/links', processLimiter, (req, res) => {
 
 
 app.post('/api/generate-cli', processLimiter, (req, res) => {
-    const { url, urls, segments, exportDir, shortsFormat, copyrightBypass, mergeClips, cpuFriendly } = req.body;
+    const { url, urls, segments, exportDir, shortsFormat, copyrightBypass, mergeClips, cpuFriendly, autoCaptions, quality4k, manualMode } = req.body;
 
     const activeUrls = urls && Array.isArray(urls) ? urls.map(u => u.trim()).filter(Boolean) : [url].filter(Boolean);
 
@@ -220,10 +223,13 @@ app.post('/api/generate-cli', processLimiter, (req, res) => {
         // otherwise use Batch Mode format (omit url argument).
         let command = '';
         const cpuFriendlyFlag = cpuFriendly ? ' --cpu-friendly' : '';
+        const autoCaptionsFlag = autoCaptions ? ' --auto-captions' : '';
+        const quality4kFlag = quality4k ? ' --4k' : '';
+        const manualModeFlag = manualMode ? ' --no-link-db' : '';
         if (activeUrls.length === 1) {
-            command = `node cli.js "${activeUrls[0]}" "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}`;
+            command = `node cli.js "${activeUrls[0]}" "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}${autoCaptionsFlag}${quality4kFlag}${manualModeFlag}`;
         } else {
-            command = `node cli.js "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}`;
+            command = `node cli.js "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}${autoCaptionsFlag}${quality4kFlag}${manualModeFlag}`;
         }
 
         res.json({

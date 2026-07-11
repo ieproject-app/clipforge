@@ -11,6 +11,10 @@ import { normalizeFontPath } from '../filterHelpers.js'
 //       `\:` escape sequence, then assert no `\` remains.
 //   (2) has every drive-letter colon escaped: if the input starts with
 //       `[A-Za-z]:`, the output starts with `[A-Za-z]\:`.
+//   (3) never wraps its output in single quotes: the helper produces
+//       unquoted-safe values (FFmpeg's quoted vs unquoted escaping rules
+//       differ — see AUDIT_PROMPT.md / ERROR_LOG.md #8). Callers embed the
+//       result directly as `option=<value>` without quotes.
 
 // A path segment: letters, digits, dots, spaces, hyphens, underscores.
 const segmentChar = fc.constantFrom(
@@ -52,11 +56,16 @@ describe('normalizeFontPath — Property 3: font-path normalization is safe for 
         // (2) Drive-letter colon is escaped when the input has a drive letter.
         const driveMatch = /^([A-Za-z]):/.exec(fontPath)
         if (driveMatch) {
-          expect(out.startsWith(`${driveMatch[1]}\\\\:`)).toBe(true)
+          expect(out.startsWith(`${driveMatch[1]}\\:`)).toBe(true)
         } else {
           // No drive letter -> output must contain no backslash at all.
           expect(out.includes('\\')).toBe(false)
         }
+
+        // (3) Output is never wrapped in single quotes. The helper's contract is
+        //     to produce unquoted-safe values; a leading quote would break the
+        //     `\\:` colon escape (backslashes are literal inside single quotes).
+        expect(out.includes("'")).toBe(false)
       }),
       { numRuns: 200 }
     )

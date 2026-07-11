@@ -24,6 +24,8 @@ Thumbs.db
 .vscode/
 .idea/
 .kiro/
+.mimocode/
+.zcode/
 
 # Logs
 *.log
@@ -31,3 +33,12 @@ npm-debug.log*
 
 # Beta lock file (local only, never commit)
 .beta-lock
+
+# Temp & generated data
+_audit_tmp/
+link/
+temp_query*.py
+temp_schema.py
+
+# Binary executables
+mimo.exe

@@ -18,6 +18,10 @@ export default function App() {
     const [durationPref, setDurationPref] = useState(() => localStorage.getItem('clipforge_durationPref') || 'dynamic');
     const [mergeClips, setMergeClips] = useState(() => localStorage.getItem('clipforge_mergeClips') === 'true');
     const [cpuFriendly, setCpuFriendly] = useState(() => localStorage.getItem('clipforge_cpuFriendly') === 'true');
+    const [autoCaptions, setAutoCaptions] = useState(() => localStorage.getItem('clipforge_autoCaptions') === 'true');
+    const [quality4k, setQuality4k] = useState(() => localStorage.getItem('clipforge_quality4k') === 'true');
+    const [manualMode, setManualMode] = useState(false);
+    const [manualUrlInput, setManualUrlInput] = useState('');
     const [urlCount, setUrlCount] = useState(1);
 
     // Link Manager States & Functions
@@ -256,7 +260,9 @@ export default function App() {
         localStorage.setItem('clipforge_exportDir', exportDir);
         localStorage.setItem('clipforge_shortsFormat', shortsFormat);
         localStorage.setItem('clipforge_cpuFriendly', cpuFriendly);
-    }, [mergeClips, durationPref, exportDir, shortsFormat, cpuFriendly]);
+        localStorage.setItem('clipforge_autoCaptions', autoCaptions);
+        localStorage.setItem('clipforge_quality4k', quality4k);
+    }, [mergeClips, durationPref, exportDir, shortsFormat, cpuFriendly, autoCaptions, quality4k]);
 
 
 
@@ -271,6 +277,9 @@ export default function App() {
         setCliCommand('');
         setMergeClips(false);
         setCpuFriendly(false);
+        setManualUrlInput('');
+        // Note: manualMode is NOT reset — user may want to stay in Manual Mode
+        // across multiple runs. Only mode toggle buttons change manualMode.
 
         // Revert auto-selected links that are still "processing" back to "pending".
         // Links that were manually marked "done" by the user are NOT reverted.
@@ -314,9 +323,11 @@ export default function App() {
 
         let durationRules = '';
         if (durationPref === 'short') {
-            durationRules = '- Each Shorts clip must be **15-60 seconds** long (ideally under 60s). Focus on quick hooks, punchlines, and high-energy/fast-paced moments.';
+            durationRules = `- Each Shorts clip must be **15-60 seconds** long (ideally under 60s). Focus on quick hooks, punchlines, and high-energy/fast-paced moments.
+- **Exception — "Deep" complete point:** If a segment contains a SINGLE, complete, cohesive point (e.g. one full lesson, a complete story, an uninterrupted explanation) that CANNOT be split without losing meaning, you may extend up to **180 seconds (3 minutes)** max. Label such segments as "deep" in your reasoning. Only use this exception when truly necessary — do not pad lengths.`;
         } else if (durationPref === 'deep') {
-            durationRules = '- Each Shorts clip must be **30-90 seconds** long. Focus on delivering a complete, meaningful point, lesson, or explanation without cutting off mid-sentence.';
+            durationRules = `- Each Shorts clip must be **30-90 seconds** long. Focus on delivering a complete, meaningful point, lesson, or explanation without cutting off mid-sentence.
+- **Exception — Extended deep point:** For a single uninterrupted point that forms a complete lesson or narrative arc, you may extend up to **180 seconds (3 minutes)** max. Only use this when splitting would break the coherence of the message.`;
         } else if (durationPref === 'long') {
             durationRules = '- This is a **long-form highlight reel (3-15 minutes total)**. Extract the most important segments that preserve the full narrative arc — intro, key points, climax, and conclusion. Cut repetitive or less important parts, but keep the story flowing naturally from start to finish.\n- Each individual segment should be 30 seconds to 3 minutes long.\n- When combined in order, the segments should feel like one cohesive video — not a compilation of random clips.';
         } else {
@@ -372,6 +383,12 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
 - **end**: End time in seconds (integer)
 - **title**: ${isLongForm ? 'A short, descriptive segment label summarizing what this section covers (max 60 chars). These titles will appear as chapters in the final video.' : 'A short, catchy, viral-ready YouTube Shorts title (max 60 chars). Use power words, numbers, or questions. Must work as a standalone hook.'}
 - **hook**: ${isLongForm ? 'A brief transition sentence connecting this segment to the next one (max 100 chars). Helps the narrative flow.' : 'The opening sentence/phrase that appears in the first 3 seconds to stop the scroll. Make it bold, punchy, and curiosity-driven.'}
+- **subtitles**: An array of subtitle entries for the ENTIRE clip. Write EVERY spoken word — do NOT summarize. Each entry: { "start": startSec, "end": endSec, "text": "..." }. Timestamps RELATIVE to clip start (0.0 = beginning). Max 60 chars per text. Keep 0.3-0.5s gaps. Include ALL words, Arabic terms as-is. Example: [{"start": 0.5, "end": 3.0, "text": "Assalamualaikum warahmatullahi wabarakatuh"}, {"start": 3.5, "end": 7.2, "text": "Alhamdulillah, segala puji bagi Allah"}]
+  **CRITICAL JSON rule for every string value (subtitles.text, title, hook, etc.):** You MUST NOT put a literal double-quote character (\"\") inside a JSON string value — it breaks the JSON parser and aborts the whole run. Spoken dialogue, quotations, and dialogue markers must use single quotes (') or curly quotes (“ ”) instead of straight double quotes. Examples of what to write and what to avoid:
+  • WRONG: {"text": ""Ali, kamu tidur di tempat tidur saya.""}   ← parser sees empty string, then garbage
+  • RIGHT: {"text": "'Ali, kamu tidur di tempat tidur saya.'"}     ← single-quote safe in JSON
+  • RIGHT: {"text": "\"Ali, kamu tidur di tempat tidur saya.\""}     ← backslash-escaped if you must use \", but prefer the single-quote form above
+  Never wrap spoken dialogue in straight double quotes inside any string field — always use ' or “ ”.
 - **description**: ${isLongForm ? 'A segment summary (2-3 sentences) explaining the key point covered and why it matters. Include relevant timestamps and hashtags.' : 'A complete YouTube Shorts description (3-5 sentences). Include: what the clip is about, why it matters, a call-to-action. Write naturally as if speaking to the viewer. End with relevant hashtags on a new line.'}
 - **tags**: A comma-separated string of 10-15 YouTube SEO tags relevant to this specific clip. Include both broad and niche tags (e.g. "islamic lectures, motivation, self improvement, ustadz adi hidayat, ...").
 - **playlist**: A suggested YouTube playlist name where this video belongs (1 line, max 80 chars). Helps organize content into series/categories (e.g. "Ustadz Adi Hidayat — Full Lectures", "Tech Reviews 2026", "Cooking Tutorials").
@@ -386,8 +403,13 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
     "start": 120,
     "end": 175,
     "title": "Why 99% of People Get This Wrong",
-    "hook": "Most people don't know this, but it changes everything...",
-    "description": "In this clip, [speaker] breaks down the exact reason why most people struggle with [topic]. This insight completely shifts how you approach [subject]. If you've been making this mistake, here's how to fix it.\n\nFollow for more tips like this!\n\n#Shorts #[Topic] #[Niche] #Tips #Learning",
+	    "hook": "Most people don't know this, but it changes everything...",
+	    "subtitles": [
+	      {"start": 0.5, "end": 3.0, "text": "Assalamualaikum warahmatullahi wabarakatuh"},
+	      {"start": 3.5, "end": 7.2, "text": "Alhamdulillah, segala puji bagi Allah SWT"},
+	      {"start": 7.5, "end": 12.0, "text": "Hari ini kita akan membahas tentang makna"}
+	    ],
+	    "description": "In this clip, [speaker] breaks down the exact reason why most people struggle with [topic]. This insight completely shifts how you approach [subject]. If you've been making this mistake, here's how to fix it.\n\nFollow for more tips like this!\n\n#Shorts #[Topic] #[Niche] #Tips #Learning",
     "tags": "shorts, [topic], [niche], tips, tutorial, educational, viral, learning, [keyword1], [keyword2]",
     "playlist": "[Channel Name] — Highlights & Key Moments",
     "category": "Education",
@@ -522,13 +544,24 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
                         url: s.url || urls[0], // fallback to first URL if none provided in JSON
                         start: s.start,
                         end: s.end,
-                        title: s.title || 'Clip'
+                        title: s.title || 'Clip',
+                        subtitles: s.subtitles || undefined,
+                        hook: s.hook || undefined,
+                        description: s.description || undefined,
+                        tags: s.tags || undefined,
+                        playlist: s.playlist || undefined,
+                        category: s.category || undefined,
+                        credits: s.credits || undefined,
+                        disclaimer: s.disclaimer || undefined
                     })),
                     exportDir: exportDir.trim() || 'D:\\YT Shorts',
                     shortsFormat,
                     copyrightBypass: true,
                     mergeClips,
-                    cpuFriendly
+                    cpuFriendly,
+                    autoCaptions,
+                    quality4k,
+                    manualMode
                 }),
             });
 
@@ -553,9 +586,32 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
         } finally {
             setProcessing(false);
         }
-    }, [segments, videoUrl1, videoUrl2, videoUrl3, exportDir, shortsFormat, mergeClips, cpuFriendly, showToast]);
+    }, [segments, videoUrl1, videoUrl2, videoUrl3, exportDir, shortsFormat, mergeClips, cpuFriendly, autoCaptions, manualMode, showToast]);
 
     const totalDuration = segments.reduce((sum, s) => sum + (Number(s.end) - Number(s.start) || 0), 0);
+
+    // Add a manually-pasted URL to the first empty slot (max 3).
+    // Used in Manual Mode (Step 1 input field). Enter key also triggers this.
+    const handleAddManualUrl = useCallback(() => {
+        const url = manualUrlInput.trim();
+        if (!url) return;
+        // Find first empty slot — fill videoUrl1, then 2, then 3.
+        if (!videoUrl1.trim()) {
+            setVideoUrl1(url);
+        } else if (!videoUrl2.trim()) {
+            setVideoUrl2(url);
+        } else if (!videoUrl3.trim()) {
+            setVideoUrl3(url);
+        } else {
+            showToast('Max 3 URLs reached — remove one first', 'warning');
+            return;
+        }
+        setManualUrlInput('');
+        setUrlCount(Math.min(urlCount + 1, 3));
+        setSegments([]);
+        setJsonInput('');
+        setCliCommand('');
+    }, [manualUrlInput, videoUrl1, videoUrl2, videoUrl3, urlCount, showToast]);
 
     return (
         <div className="app-viewport-wrapper">
@@ -617,184 +673,299 @@ Return ONLY a raw JSON array (no markdown code blocks, no extra text). Each item
 
             {activeTab === 'generator' ? (
                 <main className="generator-steps" style={{
-                    maxWidth: '720px', margin: '0 auto', display: 'flex',
-                    flexDirection: 'column', gap: '14px', padding: '0 8px'
+                    maxWidth: '700px', margin: '0 auto', display: 'flex',
+                    flexDirection: 'column', gap: '10px', padding: '0 6px'
                 }}>
-                    {/* ── STEP 1: Select Videos ── */}
-                    <div className="glass-card" style={{ padding: '16px 20px' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
-                            Step 1 · 📺 Select Videos
-                        </div>
-                        
-                        {/* Auto-select + pending count */}
-                        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center' }}>
-                            <button type="button" className="btn btn-secondary"
-                                style={{ flex: 1, height: '30px', fontSize: '12px', borderRadius: '6px', fontWeight: '600', background: 'rgba(156,39,176,0.08)', color: '#E040FB', border: '1px solid rgba(156,39,176,0.15)' }}
-                                onClick={() => handleAutoSelect(1)}>
-                                ⚡ Auto 1 Link
+                    {/* ── MODE TOGGLE ── */}
+                    <div className="glass-card" style={{ padding: '8px 14px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                            <button type="button"
+                                onClick={() => {
+                                    if (manualMode) {
+                                        setVideoUrl1(''); setVideoUrl2(''); setVideoUrl3('');
+                                        setUrlCount(1); setManualUrlInput('');
+                                        setSegments([]); setJsonInput(''); setCliCommand('');
+                                    }
+                                    setManualMode(false);
+                                }}
+                                style={{
+                                    height: '30px', fontSize: '11.5px', borderRadius: '7px', fontWeight: '700',
+                                    border: !manualMode ? '1.5px solid #3b82f6' : '1px solid rgba(255,255,255,0.07)',
+                                    background: !manualMode ? 'rgba(59,130,246,0.14)' : 'rgba(255,255,255,0.02)',
+                                    color: !manualMode ? '#60a5fa' : '#6b7280',
+                                    cursor: 'pointer', transition: 'all 0.2s',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px'
+                                }}>
+                                📂 Link Manager Mode
                             </button>
-                            <button type="button" className="btn btn-secondary"
-                                style={{ flex: 1, height: '30px', fontSize: '12px', borderRadius: '6px', fontWeight: '600', background: 'rgba(156,39,176,0.08)', color: '#E040FB', border: '1px solid rgba(156,39,176,0.15)' }}
-                                onClick={() => handleAutoSelect(3)}>
-                                ⚡ Auto 3 Links
+                            <button type="button"
+                                onClick={() => {
+                                    if (!manualMode) {
+                                        setVideoUrl1(''); setVideoUrl2(''); setVideoUrl3('');
+                                        setUrlCount(1); setSegments([]); setJsonInput(''); setCliCommand('');
+                                    }
+                                    setManualMode(true);
+                                }}
+                                style={{
+                                    height: '30px', fontSize: '11.5px', borderRadius: '7px', fontWeight: '700',
+                                    border: manualMode ? '1.5px solid #8b5cf6' : '1px solid rgba(255,255,255,0.07)',
+                                    background: manualMode ? 'rgba(139,92,246,0.14)' : 'rgba(255,255,255,0.02)',
+                                    color: manualMode ? '#a78bfa' : '#6b7280',
+                                    cursor: 'pointer', transition: 'all 0.2s',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px'
+                                }}>
+                                ✍️ Manual Mode
                             </button>
-                            <span style={{ fontSize: '11px', background: 'rgba(255,152,0,0.1)', color: '#FF9800', padding: '4px 10px', borderRadius: '14px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                                ⏳ {links.filter(l => l.status === 'pending').length} pending
-                            </span>
                         </div>
-
-                        {/* URL Pills — compact, no scroll */}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                            {[videoUrl1, videoUrl2, videoUrl3].map((url, idx) => {
-                                if (!url.trim()) return null;
-                                return (
-                                    <span key={idx} style={{
-                                        display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                        background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)',
-                                        borderRadius: '20px', padding: '5px 12px', fontSize: '12px',
-                                        color: '#60a5fa', maxWidth: '100%'
-                                    }}>
-                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '400px' }}>
-                                            📋 {url.length > 50 ? url.substring(0, 50) + '...' : url}
-                                        </span>
-                                        <span style={{ cursor: 'pointer', fontWeight: 'bold', opacity: 0.6, fontSize: '14px' }}
-                                            onClick={() => {
-                                                if (idx === 0) { setVideoUrl1(''); if (urlCount <= 1) setUrlCount(1); }
-                                                else if (idx === 1) setVideoUrl2('');
-                                                else setVideoUrl3('');
-                                                setCliCommand('');
-                                            }}
-                                            title="Remove">×</span>
-                                    </span>
-                                );
-                            })}
-                            {(!videoUrl1.trim() && !videoUrl2.trim() && !videoUrl3.trim()) && (
-                                <span style={{ fontSize: '12px', color: '#6b7280', padding: '5px 0' }}>
-                                    No URLs selected — click Auto above or paste manually in Link Manager
-                                </span>
-                            )}
+                        <div style={{
+                            fontSize: '10px', color: '#6b7280', marginTop: '6px', textAlign: 'center',
+                            paddingTop: '5px', borderTop: '1px solid rgba(255,255,255,0.05)'
+                        }}>
+                            {manualMode
+                                ? '✍️ Paste URLs directly · CLI won\'t touch the Link Manager database'
+                                : '📂 Auto-pull pending links · CLI tracks done status in the database'}
                         </div>
                     </div>
 
-                    {/* ── STEP 2: Analyze with Gemini ── */}
-                    <div className="glass-card" style={{ padding: '16px 20px' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
-                            Step 2 · 🤖 Analyze with Gemini AI
+                    {/* ── STEP 1: Select Videos ── */}
+                    <div className="glass-card" style={{ padding: '11px 14px' }}>
+                        <div style={{
+                            fontSize: '10px', fontWeight: '700', color: '#3b82f6',
+                            textTransform: 'uppercase', letterSpacing: '1.2px', marginBottom: '8px',
+                            display: 'flex', alignItems: 'center', gap: '6px'
+                        }}>
+                            <span style={{
+                                background: 'rgba(59,130,246,0.15)', color: '#60a5fa',
+                                borderRadius: '4px', padding: '1px 6px', fontWeight: '800'
+                            }}>1</span>
+                            📺 Select Videos
                         </div>
-                        
-                        {/* Duration pills */}
-                        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
+
+                        {manualMode ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                    <input type="text" value={manualUrlInput}
+                                        onChange={(e) => setManualUrlInput(e.target.value)}
+                                        placeholder="📋 Paste YouTube URL here..."
+                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddManualUrl(); } }}
+                                        style={{
+                                            flex: 1, height: '30px', fontSize: '11.5px', borderRadius: '6px',
+                                            background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.22)',
+                                            color: '#e5e7eb', padding: '0 10px', outline: 'none'
+                                        }}
+                                    />
+                                    <button type="button"
+                                        onClick={handleAddManualUrl}
+                                        disabled={!manualUrlInput.trim() || (videoUrl1.trim() && videoUrl2.trim() && videoUrl3.trim())}
+                                        style={{
+                                            height: '30px', padding: '0 12px', fontSize: '11.5px', fontWeight: '700',
+                                            borderRadius: '6px', border: '1px solid rgba(139,92,246,0.3)',
+                                            background: 'rgba(139,92,246,0.15)', color: '#a78bfa',
+                                            cursor: 'pointer', whiteSpace: 'nowrap',
+                                            opacity: (!manualUrlInput.trim() || (videoUrl1.trim() && videoUrl2.trim() && videoUrl3.trim())) ? 0.45 : 1
+                                        }}>
+                                        + Add URL
+                                    </button>
+                                </div>
+                                {(videoUrl1.trim() || videoUrl2.trim() || videoUrl3.trim()) ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        {[videoUrl1, videoUrl2, videoUrl3].map((url, idx) => {
+                                            if (!url.trim()) return null;
+                                            const short = url.length > 58 ? url.substring(0, 58) + '…' : url;
+                                            return (
+                                                <div key={idx} style={{
+                                                    display: 'flex', alignItems: 'center',
+                                                    background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.18)',
+                                                    borderRadius: '6px', padding: '4px 8px 4px 10px', gap: '8px'
+                                                }}>
+                                                    <span style={{ fontSize: '11px', color: '#a78bfa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>📋 {short}</span>
+                                                    <button onClick={() => { if (idx === 0) setVideoUrl1(''); else if (idx === 1) setVideoUrl2(''); else setVideoUrl3(''); setCliCommand(''); }}
+                                                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171', borderRadius: '4px', width: '18px', height: '18px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontWeight: '700', lineHeight: 1 }}
+                                                        title="Remove">×</button>
+                                                </div>
+                                            );
+                                        })}
+                                        {(videoUrl1.trim() && videoUrl2.trim() && videoUrl3.trim()) && (
+                                            <div style={{ fontSize: '10px', color: '#fbbf24' }}>⚠️ Max 3 URLs reached — remove one to add another</div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div style={{ fontSize: '11px', color: '#4b5563', padding: '6px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px dashed rgba(255,255,255,0.06)', textAlign: 'center' }}>
+                                        Paste a URL above and press Enter or click Add — up to 3 URLs
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                    <button type="button"
+                                        style={{ flex: 1, height: '28px', fontSize: '11.5px', borderRadius: '6px', fontWeight: '600', background: 'rgba(156,39,176,0.08)', color: '#E040FB', border: '1px solid rgba(156,39,176,0.18)', cursor: 'pointer' }}
+                                        onClick={() => handleAutoSelect(1)}>
+                                        ⚡ Auto 1 Link
+                                    </button>
+                                    <button type="button"
+                                        style={{ flex: 1, height: '28px', fontSize: '11.5px', borderRadius: '6px', fontWeight: '600', background: 'rgba(156,39,176,0.08)', color: '#E040FB', border: '1px solid rgba(156,39,176,0.18)', cursor: 'pointer' }}
+                                        onClick={() => handleAutoSelect(3)}>
+                                        ⚡ Auto 3 Links
+                                    </button>
+                                    <span style={{ fontSize: '11px', background: 'rgba(255,152,0,0.1)', color: '#FF9800', padding: '3px 8px', borderRadius: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>
+                                        ⏳ {links.filter(l => l.status === 'pending').length} pending
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    {[videoUrl1, videoUrl2, videoUrl3].map((url, idx) => {
+                                        if (!url.trim()) return null;
+                                        const short = url.length > 58 ? url.substring(0, 58) + '…' : url;
+                                        return (
+                                            <div key={idx} style={{ display: 'flex', alignItems: 'center', background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.18)', borderRadius: '6px', padding: '4px 8px 4px 10px', gap: '8px' }}>
+                                                <span style={{ fontSize: '11px', color: '#60a5fa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>📋 {short}</span>
+                                                <button onClick={() => { if (idx === 0) setVideoUrl1(''); else if (idx === 1) setVideoUrl2(''); else setVideoUrl3(''); setCliCommand(''); }}
+                                                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171', borderRadius: '4px', width: '18px', height: '18px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontWeight: '700', lineHeight: 1 }}
+                                                    title="Remove">×</button>
+                                            </div>
+                                        );
+                                    })}
+                                    {(!videoUrl1.trim() && !videoUrl2.trim() && !videoUrl3.trim()) && (
+                                        <div style={{ fontSize: '11px', color: '#4b5563', padding: '6px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px dashed rgba(255,255,255,0.06)', textAlign: 'center' }}>
+                                            No URLs selected — click Auto above or go to Link Manager
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ── STEP 2: Analyze with Gemini ── */}
+                    <div className="glass-card" style={{ padding: '11px 14px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1.2px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa', borderRadius: '4px', padding: '1px 6px', fontWeight: '800' }}>2</span>
+                            🤖 Analyze with Gemini AI
+                        </div>
+
+                        {/* Duration pills — 2×2 grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px', marginBottom: '8px' }}>
                             {['dynamic','short','deep','long'].map(mode => (
                                 <button key={mode} type="button"
                                     onClick={() => {
                                         setDurationPref(mode);
                                         setCliCommand('');
-                                        if (mode === 'long') {
-                                            setShortsFormat('original');
-                                            setMergeClips(true);
-                                        }
+                                        if (mode === 'long') { setShortsFormat('original'); setMergeClips(true); }
                                     }}
                                     style={{
-                                        padding: '5px 14px', fontSize: '11.5px', borderRadius: '16px', fontWeight: '600',
-                                        border: durationPref === mode ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)',
-                                        background: durationPref === mode ? 'rgba(59,130,246,0.12)' : 'transparent',
+                                        padding: '5px 8px', fontSize: '11px', borderRadius: '6px', fontWeight: '600',
+                                        border: durationPref === mode ? '1.5px solid #3b82f6' : '1px solid rgba(255,255,255,0.07)',
+                                        background: durationPref === mode ? 'rgba(59,130,246,0.13)' : 'rgba(255,255,255,0.02)',
                                         color: durationPref === mode ? '#60a5fa' : '#9ca3af',
-                                        cursor: 'pointer'
+                                        cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center'
                                     }}>
                                     {mode === 'dynamic' ? '🌟 Dynamic (15-120s)' : mode === 'short' ? '⚡ Short (15-60s)' : mode === 'deep' ? '📚 Deep (30-90s)' : '📺 Long Form (3-15 min)'}
                                 </button>
                             ))}
                         </div>
+
                         {durationPref === 'long' && (
-                            <div style={{ fontSize: '11px', color: '#fbbf24', marginBottom: '8px', background: 'rgba(251,191,36,0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(251,191,36,0.15)' }}>
-                                ⚠️ Standard YouTube (16:9) · Auto-merge enabled · Best for highlight reels & educational content
+                            <div style={{ fontSize: '10.5px', color: '#fbbf24', marginBottom: '8px', background: 'rgba(251,191,36,0.07)', padding: '5px 8px', borderRadius: '5px', border: '1px solid rgba(251,191,36,0.15)' }}>
+                                ⚠️ Standard YouTube (16:9) · Auto-merge enabled · Best for highlight reels
                             </div>
                         )}
 
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                        {/* Auto-Caption + Action buttons — same row */}
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: '7px', flex: 1,
+                                padding: '5px 8px', borderRadius: '6px',
+                                background: autoCaptions ? 'rgba(139,92,246,0.07)' : 'rgba(255,255,255,0.02)',
+                                border: autoCaptions ? '1px solid rgba(139,92,246,0.2)' : '1px solid rgba(255,255,255,0.05)',
+                                cursor: 'pointer'
+                            }} onClick={() => setAutoCaptions(v => !v)}>
+                                <input type="checkbox" checked={autoCaptions}
+                                    onChange={(e) => setAutoCaptions(e.target.checked)}
+                                    style={{ accentColor: '#8b5cf6', width: '13px', height: '13px', flexShrink: 0, pointerEvents: 'none' }} />
+                                <span style={{ fontSize: '11px', fontWeight: '600', color: autoCaptions ? '#a78bfa' : '#9ca3af', lineHeight: 1.3 }}>
+                                    🇮🇩 Auto-Caption
+                                </span>
+                            </div>
                             <button type="button" className="btn btn-secondary"
-                                style={{ flex: 1, height: '34px', fontSize: '12.5px', borderRadius: '6px', fontWeight: '600' }}
+                                style={{ height: '32px', fontSize: '11.5px', borderRadius: '6px', fontWeight: '700', padding: '0 12px', whiteSpace: 'nowrap' }}
                                 onClick={copyGeminiPrompt}
                                 disabled={!videoUrl1.trim() && !videoUrl2.trim() && !videoUrl3.trim()}>
                                 🎯 Copy Prompt
                             </button>
                             <a href="https://gemini.google.com" target="_blank" rel="noopener noreferrer"
                                 className="btn btn-gemini"
-                                style={{ flex: 0.8, height: '34px', fontSize: '12.5px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', fontWeight: '600' }}>
+                                style={{ height: '32px', fontSize: '11.5px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', fontWeight: '700', padding: '0 12px', whiteSpace: 'nowrap' }}>
                                 🌐 Open Gemini
                             </a>
                         </div>
                     </div>
 
                     {/* ── STEP 3: Paste JSON Result ── */}
-                    <div className="glass-card" style={{ padding: '16px 20px' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
-                            Step 3 · 📋 Paste Gemini JSON Result
+                    <div className="glass-card" style={{ padding: '11px 14px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1.2px', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa', borderRadius: '4px', padding: '1px 6px', fontWeight: '800' }}>3</span>
+                                📋 Paste Gemini JSON Result
+                            </span>
+                            {segments.length > 0 && !jsonError && (
+                                <span style={{ fontSize: '11px', color: '#10b981', fontWeight: '600' }}>✅ {segments.length} clips · {formatTime(totalDuration)}</span>
+                            )}
                         </div>
                         <textarea
                             className={`premium-textarea log-monospace ${jsonError ? 'error-border' : ''}`}
                             placeholder="Paste Gemini JSON output here..."
                             value={jsonInput}
                             onChange={(e) => handleJsonChange(e.target.value)}
-                            style={{ minHeight: '140px', fontSize: '12.5px' }}
+                            style={{ minHeight: '95px', fontSize: '11.5px' }}
                         />
-                        <div style={{ marginTop: '6px', fontSize: '12px' }}>
-                            {jsonError && <span style={{ color: '#ef4444' }}>⚠️ {jsonError}</span>}
-                            {segments.length > 0 && !jsonError && (
-                                <span style={{ color: '#10b981' }}>
-                                    ✅ {segments.length} clips · {formatTime(totalDuration)} total
-                                </span>
-                            )}
-                        </div>
+                        {jsonError && (
+                            <div style={{ marginTop: '4px', fontSize: '11px', color: '#f87171' }}>⚠️ {jsonError}</div>
+                        )}
                     </div>
 
                     {/* ── STEP 4: Settings + Generate ── */}
-                    <div className="glass-card" style={{ padding: '16px 20px' }}>
-                        <div style={{ fontSize: '11px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>
-                            Step 4 · ⚙️ Settings & Generate
+                    <div className="glass-card" style={{ padding: '11px 14px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '1.2px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa', borderRadius: '4px', padding: '1px 6px', fontWeight: '800' }}>4</span>
+                            ⚙️ Settings & Generate
                         </div>
-                        
-                        {/* Settings — compact inline */}
-                        <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <label style={{ fontSize: '11px', color: '#9ca3af', whiteSpace: 'nowrap' }}>📂 Export</label>
-                                <input type="text" className="premium-input" value={exportDir}
-                                    onChange={(e) => { setExportDir(e.target.value); setCliCommand(''); }}
-                                    style={{ width: '150px', height: '30px', fontSize: '12px', padding: '0 10px' }} />
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <label style={{ fontSize: '11px', color: '#9ca3af', whiteSpace: 'nowrap' }}>📱 Format</label>
-                                <select value={shortsFormat}
-                                    onChange={(e) => { setShortsFormat(e.target.value); setCliCommand(''); }}
-                                    className="premium-select" style={{ height: '30px', fontSize: '12px', padding: '0 8px' }}>
-                                    <option value="vertical_crop">Vertical Center Crop (9:16)</option>
-                                    <option value="vertical_blurred">Vertical Blurred BG (9:16)</option>
-                                    <option value="original">Original Widescreen (16:9)</option>
-                                </select>
-                            </div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#9ca3af', cursor: 'pointer' }}>
-                                <input type="checkbox" checked={mergeClips}
-                                    onChange={(e) => { setMergeClips(e.target.checked); setCliCommand(''); }}
-                                    style={{ accentColor: '#3b82f6' }} />
+
+                        {/* Settings — all in one row */}
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' }}>
+                            <label style={{ fontSize: '11px', color: '#9ca3af', whiteSpace: 'nowrap' }}>📂 Export</label>
+                            <input type="text" className="premium-input" value={exportDir}
+                                onChange={(e) => { setExportDir(e.target.value); setCliCommand(''); }}
+                                style={{ width: '130px', height: '28px', fontSize: '11.5px', padding: '0 8px', flexShrink: 0 }} />
+                            <label style={{ fontSize: '11px', color: '#9ca3af', whiteSpace: 'nowrap' }}>📱 Format</label>
+                            <select value={shortsFormat}
+                                onChange={(e) => { setShortsFormat(e.target.value); setCliCommand(''); }}
+                                className="premium-select" style={{ flex: 1, height: '28px', fontSize: '11px', padding: '0 6px', minWidth: '130px' }}>
+                                <option value="vertical_crop">Vertical Center Crop (9:16)</option>
+                                <option value="vertical_moderate">Vertical Moderate Crop (9:16)</option>
+                                <option value="vertical_blurred">Vertical Blurred BG (9:16)</option>
+                                <option value="original">Original Widescreen (16:9)</option>
+                            </select>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: mergeClips ? '#60a5fa' : '#9ca3af', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <input type="checkbox" checked={mergeClips} onChange={(e) => { setMergeClips(e.target.checked); setCliCommand(''); }} style={{ accentColor: '#3b82f6', width: '12px', height: '12px' }} />
                                 🔗 Merge
                             </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#9ca3af', cursor: 'pointer' }}>
-                                <input type="checkbox" checked={cpuFriendly}
-                                    onChange={(e) => { setCpuFriendly(e.target.checked); setCliCommand(''); }}
-                                    style={{ accentColor: '#3b82f6' }} />
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: quality4k ? '#60a5fa' : '#9ca3af', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <input type="checkbox" checked={quality4k} onChange={(e) => { setQuality4k(e.target.checked); setCliCommand(''); }} style={{ accentColor: '#3b82f6', width: '12px', height: '12px' }} />
+                                📺 4K
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: cpuFriendly ? '#60a5fa' : '#9ca3af', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <input type="checkbox" checked={cpuFriendly} onChange={(e) => { setCpuFriendly(e.target.checked); setCliCommand(''); }} style={{ accentColor: '#3b82f6', width: '12px', height: '12px' }} />
                                 🍃 CPU
                             </label>
                         </div>
 
-                        {/* Generate button */}
                         <button type="button" className="btn btn-primary"
-                            style={{ width: '100%', height: '44px', fontSize: '14px', borderRadius: '8px', fontWeight: '700', marginTop: '4px' }}
+                            style={{ width: '100%', height: '38px', fontSize: '13px', borderRadius: '7px', fontWeight: '700' }}
                             onClick={handleGenerateCLICommand}
                             disabled={(!videoUrl1.trim() && !videoUrl2.trim() && !videoUrl3.trim()) || segments.length === 0 || !!jsonError || processing}>
                             {processing ? '⏳ Generating...' : '💻 Generate & Copy CLI Command'}
                         </button>
                         {cliCommand && (
-                            <div style={{ marginTop: '8px', fontSize: '10px', color: '#6b7280', textAlign: 'center' }}>
+                            <div style={{ marginTop: '5px', fontSize: '10px', color: '#6b7280', textAlign: 'center' }}>
                                 ✅ Command copied! Paste in terminal to run.
                             </div>
                         )}
