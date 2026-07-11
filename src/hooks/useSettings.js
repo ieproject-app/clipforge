@@ -8,6 +8,8 @@ export function useSettings() {
     const [cpuFriendly, setCpuFriendly] = useState(() => localStorage.getItem('clipforge_cpuFriendly') === 'true');
     const [autoCaptions, setAutoCaptions] = useState(() => localStorage.getItem('clipforge_autoCaptions') === 'true');
     const [quality4k, setQuality4k] = useState(() => localStorage.getItem('clipforge_quality4k') === 'true');
+    const [kineticTypo, setKineticTypo] = useState(() => localStorage.getItem('clipforge_kineticTypo') === 'true');
+    const [activeChannel, setActiveChannel] = useState(() => localStorage.getItem('clipforge_activeChannel') || 'default');
     const [manualMode, setManualMode] = useState(false);
 
     // Sync all persistent settings to LocalStorage in one effect
@@ -19,7 +21,9 @@ export function useSettings() {
         localStorage.setItem('clipforge_cpuFriendly', cpuFriendly);
         localStorage.setItem('clipforge_autoCaptions', autoCaptions);
         localStorage.setItem('clipforge_quality4k', quality4k);
-    }, [mergeClips, durationPref, exportDir, shortsFormat, cpuFriendly, autoCaptions, quality4k]);
+        localStorage.setItem('clipforge_kineticTypo', kineticTypo);
+        localStorage.setItem('clipforge_activeChannel', activeChannel);
+    }, [mergeClips, durationPref, exportDir, shortsFormat, cpuFriendly, autoCaptions, quality4k, kineticTypo, activeChannel]);
 
     return {
         exportDir,
@@ -36,6 +40,10 @@ export function useSettings() {
         setAutoCaptions,
         quality4k,
         setQuality4k,
+        kineticTypo,
+        setKineticTypo,
+        activeChannel,
+        setActiveChannel,
         manualMode,
         setManualMode,
     };

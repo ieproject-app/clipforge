@@ -10,7 +10,7 @@ import { getMetadata, downloadWithCache } from './server/services/ytdlp.js';
 import { cutSegment, mergeSegments } from './server/services/ffmpeg.js';
 import { validateSegment } from './server/services/filterHelpers.js';
 import { writeJobLog } from './server/services/logger.js';
-import { VIDEO_ENCODER, LINKS_FILE } from './server/services/platform.js';
+import { VIDEO_ENCODER, LINKS_FILE, getLinksFile, CHANNELS } from './server/services/platform.js';
 import { downloadAutoSubs, parseVttToSubtitles, extractClipSubtitles } from './server/services/youtubeSubs.js';
 import { printUsage, checkForUpdates } from './cli/display.js';
 import { subtitlesToSrt } from './cli/helpers.js';
@@ -35,10 +35,16 @@ async function main() {
   const noUpdateCheck = args.includes('--no-update-check');
   const autoCaptions = args.includes('--auto-captions');
   const quality4k = args.includes('--4k');
+  const kineticTypo = args.includes('--kinetic');
   // --no-link-db: skip loading/writing the Link Manager database. Use this for
   // manual one-off runs from the Generator UI that shouldn't pollute the link
   // database (e.g. testing, re-rendering a clip without tracking it as "done").
   const noLinkDb = args.includes('--no-link-db');
+  const channel = (() => {
+    const idx = args.indexOf('--channel');
+    if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+    return 'default';
+  })();
   
   const positionalArgs = args.filter(a => !a.startsWith('--'));
   
@@ -180,6 +186,7 @@ async function main() {
   console.log(`ℹ️ Video Encoder     : ${VIDEO_ENCODER === 'libx264' ? 'libx264 (CPU)' : chalk.green(`${VIDEO_ENCODER} (GPU ✓)`)}`);
   console.log(`📺 Source Quality    : ${quality4k ? chalk.green('4K (2160p) ✨') : '1080p'}`);
   console.log(`🇮🇩 Auto-Captions     : ${autoCaptions ? chalk.green('Enabled (YouTube auto-sub → Gemini fallback)') : chalk.dim('Disabled')}`);
+  console.log(`⚡ Kinetic Typography : ${kineticTypo ? chalk.green('Enabled ✨') : chalk.dim('Disabled')}`);
   if (noLinkDb) {
     console.log(`🔗 Link Database     : ${chalk.dim('Skipped (--no-link-db)')}`);
   }
@@ -190,8 +197,9 @@ async function main() {
   let linksDb = [];
   if (!noLinkDb) {
     try {
-      if (fs.existsSync(LINKS_FILE)) {
-        const content = fs.readFileSync(LINKS_FILE, 'utf8');
+      const linksFile = getLinksFile(channel);
+      if (fs.existsSync(linksFile)) {
+        const content = fs.readFileSync(linksFile, 'utf8');
         linksDb = parseLinksContent(content);
       }
     } catch (err) {
@@ -460,7 +468,7 @@ async function main() {
             }
             if (clipSubs && clipSubs.length > 0) {
               captionSrtPath = path.join(batchTempDir, `subtitles_${u}_${i}.srt`);
-              subtitlesToSrt(clipSubs, captionSrtPath);
+              subtitlesToSrt(clipSubs, captionSrtPath, kineticTypo ? 'kinetic' : 'standard');
               // Validate SRT was written successfully before passing to FFmpeg
               try {
                 const srtStat = fs.statSync(captionSrtPath);
@@ -632,8 +640,9 @@ async function main() {
     // Skipped in --no-link-db mode (manual runs don't write to the database).
     if (!noLinkDb) {
       try {
-        if (fs.existsSync(LINKS_FILE)) {
-          const content = fs.readFileSync(LINKS_FILE, 'utf8');
+        const linksFile = getLinksFile(channel);
+        if (fs.existsSync(linksFile)) {
+          const content = fs.readFileSync(linksFile, 'utf8');
           const currentLinks = parseLinksContent(content);
           let updatedCount = 0;
           let revertedCount = 0;
@@ -667,9 +676,9 @@ async function main() {
             lines.push(`    ${link.url}`);
           }
           // Atomic write: temp file → rename (prevents race condition with server)
-          const tmpPath = LINKS_FILE + '.tmp';
+          const tmpPath = linksFile + '.tmp';
           fs.writeFileSync(tmpPath, lines.join('\n') + '\n', 'utf8');
-          fs.renameSync(tmpPath, LINKS_FILE);
+          fs.renameSync(tmpPath, linksFile);
           if (updatedCount > 0) {
             console.log(chalk.green(`\n✔ Updated ${updatedCount} links to 'done' in database ✓`));
           }

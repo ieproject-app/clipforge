@@ -30,6 +30,7 @@ ${chalk.bold('Flags:')}
   ${chalk.green('--cpu-friendly')}           Limit to single CPU core (slower but compatible).
   ${chalk.green('--auto-captions')}          Download YouTube auto-captions for accurate subtitles.
   ${chalk.green('--4k')}                     Download source video in 4K (2160p) for sharper center crop quality. Default is 1080p.
+  ${chalk.green('--kinetic')}                 Use kinetic typography (per-word subtitles with alternating colors).
   ${chalk.green('--no-link-db')}             Skip read/write of Link Manager database (manual mode).
 
 ${chalk.bold('JSON Segments Format Example (Single or Multi-URL):')}

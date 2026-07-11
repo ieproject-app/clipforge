@@ -25,6 +25,8 @@ export default function App() {
         cpuFriendly, setCpuFriendly,
         autoCaptions, setAutoCaptions,
         quality4k, setQuality4k,
+        kineticTypo, setKineticTypo,
+        activeChannel, setActiveChannel,
         manualMode, setManualMode,
     } = useSettings();
 
@@ -48,7 +50,7 @@ export default function App() {
     const fetchLinks = useCallback(async (silent = false) => {
         if (!silent) setLoadingLinks(true);
         try {
-            const res = await fetch('/api/links');
+            const res = await fetch(`/api/links?channel=${encodeURIComponent(activeChannel)}`);
             if (res.ok) {
                 const data = await res.json();
                 setLinks(data.links || []);
@@ -60,7 +62,7 @@ export default function App() {
         } finally {
             if (!silent) setLoadingLinks(false);
         }
-    }, [showToast]);
+    }, [showToast, activeChannel]);
 
     useEffect(() => {
         fetchLinks();
@@ -72,7 +74,7 @@ export default function App() {
             const res = await fetch('/api/links/status', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, status: nextStatus })
+                body: JSON.stringify({ url, status: nextStatus, channel: activeChannel })
             });
             if (res.ok) {
                 showToast(`Status updated to ${nextStatus}! ✓`);
@@ -93,7 +95,7 @@ export default function App() {
             const res = await fetch('/api/links/add-bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: bulkInput })
+                body: JSON.stringify({ text: bulkInput, channel: activeChannel })
             });
             const data = await res.json();
             if (res.ok) {
@@ -120,7 +122,7 @@ export default function App() {
             const res = await fetch('/api/links', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url })
+                body: JSON.stringify({ url, channel: activeChannel })
             });
             if (res.ok) {
                 showToast('Link deleted successfully. 🗑');
@@ -182,7 +184,7 @@ export default function App() {
                     fetch('/api/links/status', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url, status: 'done' })
+                        body: JSON.stringify({ url, status: 'done', channel: activeChannel })
                     })
                 )
             );
@@ -216,7 +218,7 @@ export default function App() {
                     fetch('/api/links/status', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url, status: 'processing' })
+                        body: JSON.stringify({ url, status: 'processing', channel: activeChannel })
                     })
                 )
             );
@@ -288,7 +290,7 @@ export default function App() {
                             fetch('/api/links/status', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ url, status: 'pending' })
+                                body: JSON.stringify({ url, status: 'pending', channel: activeChannel })
                             })
                         )
                     );
@@ -459,7 +461,9 @@ export default function App() {
                     cpuFriendly,
                     autoCaptions,
                     quality4k,
-                    manualMode
+                    manualMode,
+                    kineticTypo,
+                    channel: activeChannel
                 }),
             });
 
@@ -484,7 +488,7 @@ export default function App() {
         } finally {
             setProcessing(false);
         }
-    }, [segments, videoUrl1, videoUrl2, videoUrl3, exportDir, shortsFormat, mergeClips, cpuFriendly, autoCaptions, manualMode, showToast]);
+    }, [segments, videoUrl1, videoUrl2, videoUrl3, exportDir, shortsFormat, mergeClips, cpuFriendly, autoCaptions, manualMode, kineticTypo, activeChannel, showToast]);
 
     const totalDuration = segments.reduce((sum, s) => sum + (Number(s.end) - Number(s.start) || 0), 0);
 
@@ -850,6 +854,10 @@ export default function App() {
                                 <input type="checkbox" checked={quality4k} onChange={(e) => { setQuality4k(e.target.checked); setCliCommand(''); }} style={{ accentColor: '#3b82f6', width: '12px', height: '12px' }} />
                                 📺 4K
                             </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: kineticTypo ? '#fbbf24' : '#9ca3af', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <input type="checkbox" checked={kineticTypo} onChange={(e) => { setKineticTypo(e.target.checked); setCliCommand(''); }} style={{ accentColor: '#fbbf24', width: '12px', height: '12px' }} />
+                                ⚡ Kinetic
+                            </label>
                             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: cpuFriendly ? '#60a5fa' : '#9ca3af', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                 <input type="checkbox" checked={cpuFriendly} onChange={(e) => { setCpuFriendly(e.target.checked); setCliCommand(''); }} style={{ accentColor: '#3b82f6', width: '12px', height: '12px' }} />
                                 🍃 CPU
@@ -871,6 +879,25 @@ export default function App() {
                 </main>
             ) : (
                 <div className="link-manager-container fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
+                    {/* Channel Selector */}
+                    <div className="glass-card full-width-card" style={{ marginBottom: '0px' }}>
+                        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
+                            <h3 style={{ fontSize: '13px', margin: 0 }}>📺 Active Channel</h3>
+                            <select value={activeChannel}
+                                onChange={(e) => {
+                                    setActiveChannel(e.target.value);
+                                    setTimeout(() => fetchLinks(true), 50);
+                                }}
+                                className="premium-select"
+                                style={{ fontSize: '12px', padding: '4px 8px', minWidth: '160px' }}>
+                                <option value="default">Default Channel</option>
+                                <option value="channel1">Channel 1</option>
+                                <option value="channel2">Channel 2</option>
+                                <option value="channel3">Channel 3</option>
+                            </select>
+                        </div>
+                    </div>
+
                      {/* Add New Link Card */}
                      <div className="glass-card full-width-card">
                          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>

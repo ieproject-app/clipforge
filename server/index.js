@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import { LINKS_FILE } from './services/platform.js';
+import { LINKS_FILE, CHANNELS, getLinksFile } from './services/platform.js';
 import { metadataLimiter, processLimiter } from './middleware/rateLimiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -90,14 +90,26 @@ function writeLinksFile(filePath, links) {
 
 // ============ API ENDPOINTS ============
 
+// Get available channels
+app.get('/api/channels', (req, res) => {
+    const channels = Object.entries(CHANNELS).map(([key, val]) => ({
+        key,
+        label: val.label,
+        file: val.file,
+    }));
+    res.json({ success: true, channels });
+});
+
 app.get('/api/links', processLimiter, (req, res) => {
     try {
-        if (!fs.existsSync(LINKS_FILE)) {
-            fs.mkdirSync(path.dirname(LINKS_FILE), { recursive: true });
-            fs.writeFileSync(LINKS_FILE, '', 'utf8');
+        const channel = req.query.channel || 'default';
+        const linksFile = getLinksFile(channel);
+        if (!fs.existsSync(linksFile)) {
+            fs.mkdirSync(path.dirname(linksFile), { recursive: true });
+            fs.writeFileSync(linksFile, '', 'utf8');
         }
-        const links = parseLinksFile(LINKS_FILE);
-        res.json({ success: true, links });
+        const links = parseLinksFile(linksFile);
+        res.json({ success: true, links, channel });
     } catch (err) {
         console.error('Failed to get links:', err.message);
         res.status(500).json({ error: err.message });
@@ -105,7 +117,7 @@ app.get('/api/links', processLimiter, (req, res) => {
 });
 
 app.post('/api/links/status', processLimiter, (req, res) => {
-    const { url, status } = req.body;
+    const { url, status, channel } = req.body;
     if (!url || !status) {
         return res.status(400).json({ error: 'Missing url or status.' });
     }
@@ -113,11 +125,12 @@ app.post('/api/links/status', processLimiter, (req, res) => {
         return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
     }
     try {
-        const links = parseLinksFile(LINKS_FILE);
+        const linksFile = getLinksFile(channel);
+        const links = parseLinksFile(linksFile);
         const link = links.find(l => l.url === url);
         if (link) {
             link.status = status;
-            writeLinksFile(LINKS_FILE, links);
+            writeLinksFile(linksFile, links);
             res.json({ success: true, message: 'Status updated.' });
         } else {
             res.status(404).json({ error: 'Link not found.' });
@@ -129,12 +142,13 @@ app.post('/api/links/status', processLimiter, (req, res) => {
 });
 
 app.post('/api/links/add-bulk', processLimiter, (req, res) => {
-    const { text } = req.body;
+    const { text, channel } = req.body;
     if (!text || !text.trim()) {
         return res.status(400).json({ error: 'Text content is empty.' });
     }
     try {
-        const currentLinks = parseLinksFile(LINKS_FILE);
+        const linksFile = getLinksFile(channel);
+        const currentLinks = parseLinksFile(linksFile);
         const parsedLinks = parseLinksContent(text);
         
         if (parsedLinks.length === 0) {
@@ -154,7 +168,7 @@ app.post('/api/links/add-bulk', processLimiter, (req, res) => {
         }
         
         if (addedCount > 0) {
-            writeLinksFile(LINKS_FILE, currentLinks);
+            writeLinksFile(linksFile, currentLinks);
         }
         
         res.json({
@@ -170,16 +184,17 @@ app.post('/api/links/add-bulk', processLimiter, (req, res) => {
 });
 
 app.delete('/api/links', processLimiter, (req, res) => {
-    const { url } = req.body;
+    const { url, channel } = req.body;
     if (!url) {
         return res.status(400).json({ error: 'Missing url.' });
     }
     try {
-        let links = parseLinksFile(LINKS_FILE);
+        const linksFile = getLinksFile(channel);
+        let links = parseLinksFile(linksFile);
         const originalLength = links.length;
         links = links.filter(l => l.url !== url);
         if (links.length < originalLength) {
-            writeLinksFile(LINKS_FILE, links);
+            writeLinksFile(linksFile, links);
             res.json({ success: true, message: 'Link deleted.' });
         } else {
             res.status(404).json({ error: 'Link not found.' });
@@ -192,7 +207,7 @@ app.delete('/api/links', processLimiter, (req, res) => {
 
 
 app.post('/api/generate-cli', processLimiter, (req, res) => {
-    const { url, urls, segments, exportDir, shortsFormat, copyrightBypass, mergeClips, cpuFriendly, autoCaptions, quality4k, manualMode } = req.body;
+    const { url, urls, segments, exportDir, shortsFormat, copyrightBypass, mergeClips, cpuFriendly, autoCaptions, quality4k, kineticTypo, manualMode, channel } = req.body;
 
     const activeUrls = urls && Array.isArray(urls) ? urls.map(u => u.trim()).filter(Boolean) : [url].filter(Boolean);
 
@@ -225,11 +240,13 @@ app.post('/api/generate-cli', processLimiter, (req, res) => {
         const cpuFriendlyFlag = cpuFriendly ? ' --cpu-friendly' : '';
         const autoCaptionsFlag = autoCaptions ? ' --auto-captions' : '';
         const quality4kFlag = quality4k ? ' --4k' : '';
+        const kineticFlag = kineticTypo ? ' --kinetic' : '';
         const manualModeFlag = manualMode ? ' --no-link-db' : '';
+        const channelFlag = channel && channel !== 'default' ? ` --channel ${channel}` : '';
         if (activeUrls.length === 1) {
-            command = `node cli.js "${activeUrls[0]}" "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}${autoCaptionsFlag}${quality4kFlag}${manualModeFlag}`;
+            command = `node cli.js "${activeUrls[0]}" "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}${autoCaptionsFlag}${quality4kFlag}${kineticFlag}${manualModeFlag}${channelFlag}`;
         } else {
-            command = `node cli.js "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}${autoCaptionsFlag}${quality4kFlag}${manualModeFlag}`;
+            command = `node cli.js "${absoluteJsonPath}" "${resolvedExportDir}" "${resolvedShortsFormat}" "${resolvedBypass}" "${resolvedMerge}"${cpuFriendlyFlag}${autoCaptionsFlag}${quality4kFlag}${kineticFlag}${manualModeFlag}${channelFlag}`;
         }
 
         res.json({

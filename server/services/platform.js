@@ -225,8 +225,27 @@ export const VIDEO_ENCODER = (() => {
 })();
 
 /**
- * Shared path to the links database file (used by both the web server and CLI).
- * Resolved from this module's location so both server/index.js and cli.js
- * reference the same physical file regardless of their own __dirname.
+ * Channel presets for the Link Manager.
+ * Each channel has its own label and separate link database file.
+ * Add new channels here as needed.
  */
-export const LINKS_FILE = path.resolve(__dirname, '..', '..', 'link', 'link_uah_100_akurat.txt');
+export const CHANNELS = {
+    'default': { label: 'Default Channel', file: 'link/default.txt' },
+    'channel1': { label: 'Channel 1', file: 'link/channel1.txt' },
+    'channel2': { label: 'Channel 2', file: 'link/channel2.txt' },
+    'channel3': { label: 'Channel 3', file: 'link/channel3.txt' },
+};
+
+/**
+ * Resolve the links file path for a given channel key.
+ * Falls back to 'default' if the channel key is unknown.
+ * @param {string} [channel='default']
+ * @returns {string} Absolute path to the channel's link database file
+ */
+export function getLinksFile(channel = 'default') {
+    const ch = CHANNELS[channel] || CHANNELS['default'];
+    return path.resolve(__dirname, '..', '..', ch.file);
+}
+
+// Legacy constant: resolves to the default channel file
+export const LINKS_FILE = getLinksFile('default');
